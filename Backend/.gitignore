@@ -1,0 +1,57 @@
+bin/
+obj/
+
+# Visual Studio
+.vs/
+.idea/
+*.user
+*.userosscache
+*.suo
+*.sln.docstates
+
+# Editores y sistema operativo
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Directorios de compilacion y publicacion
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa]rm/
+[Aa]rm64/
+bld/
+artifacts/
+publish/
+
+# Pruebas y cobertura
+TestResults/
+*.trx
+*.coverage
+*.coveragexml
+
+# Paquetes y archivos temporales de NuGet
+*.nupkg
+*.snupkg
+packages/
+.nuget/packages/
+project.lock.json
+
+# Logs y archivos generados localmente
+*.log
+logs/
+
+# Contiene credenciales reales de base de datos: nunca debe subirse al control de versiones.
+.env
+.env.*
+!.env.example
+appsettings.*.local.json
+*.pfx
+*.p12
+*.pem
+*.key
