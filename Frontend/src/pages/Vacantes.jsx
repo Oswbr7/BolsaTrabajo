@@ -1,23 +1,25 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { useSesion } from '../context/SesionContext.jsx'
 import { FORMACION_OPTIONS } from '../constants/catalogos.js'
 
 /**
- * Catálogo de perfiles de puesto (parte 1 — ver
+ * Catálogo de perfiles de puesto (ver
  * Documentacion/SE-137-Reclutamiento/conexionPerfilPuesto.md). Se listan
  * TODOS los perfiles de puesto que existen en la base compartida con
- * SIATEC, sin importar su estado (borrador/publicado/inactivo).
+ * SIATEC, sin importar su estado (borrador/publicado/inactivo), repartidos
+ * en dos pestañas:
  *
- * Filtro por especialidad: mismo patrón de tres niveles (Nivel → Área de
- * estudio → Profesión) que ya usa Postulacion.jsx y AsistentePerfil.jsx
- * para encontrar una profesión entre el catálogo grande — aquí, en vez de
- * elegir la profesión propia del aspirante, se usa para acotar la lista de
- * puestos a los que piden esa profesión como escolaridad. Es un filtro,
- * no el cruce real por ProfesionId contra la formación académica del
- * usuario en sesión — ese cruce automático sigue siendo la parte 2,
- * todavía no implementada a propósito.
+ *   - "Para ti": puestos cuya escolaridad mínima incluye alguna de las
+ *     profesiones registradas en la formación académica del usuario en
+ *     sesión (GET /api/perfil) — el cruce real por ProfesionId documentado
+ *     como "parte 2" en conexionPerfilPuesto.md.
+ *   - "Más Puestos": el resto de los puestos (los que NO coincidieron con
+ *     el perfil), para poder explorar todas las áreas. El filtro por
+ *     especialidad (mismo patrón de tres niveles que Postulacion.jsx y
+ *     AsistentePerfil.jsx) vive solo aquí, porque "Para ti" ya viene
+ *     acotado por el perfil del usuario.
  */
 function Vacantes() {
   const { usuario, cargando } = useSesion()
@@ -27,10 +29,15 @@ function Vacantes() {
   const [cargandoPerfiles, setCargandoPerfiles] = useState(true)
   const [error, setError] = useState('')
 
+  const [perfilAspirante, setPerfilAspirante] = useState(null)
+  const [cargandoPerfilAspirante, setCargandoPerfilAspirante] = useState(true)
+
   const [profesiones, setProfesiones] = useState([])
   const [nivelFiltro, setNivelFiltro] = useState('')
   const [areaEstudioFiltro, setAreaEstudioFiltro] = useState('')
   const [profesionIdFiltro, setProfesionIdFiltro] = useState('')
+
+  const [pestana, setPestana] = useState('paraTi') // 'paraTi' | 'masPuestos'
 
   useEffect(() => {
     if (!usuario) return
@@ -47,6 +54,32 @@ function Vacantes() {
       })
       .finally(() => {
         if (!cancelado) setCargandoPerfiles(false)
+      })
+
+    return () => {
+      cancelado = true
+    }
+  }, [usuario])
+
+  // Formación académica del usuario en sesión: es la base de la pestaña
+  // "Para ti". Si el perfil todavía no existe (existe: false) o falla la
+  // carga, se trata igual que "sin profesiones registradas" — no bloquea
+  // ver la pestaña "Más Puestos".
+  useEffect(() => {
+    if (!usuario) return
+
+    let cancelado = false
+
+    axios
+      .get('/api/perfil')
+      .then((response) => {
+        if (!cancelado) setPerfilAspirante(response.data)
+      })
+      .catch(() => {
+        if (!cancelado) setPerfilAspirante({ existe: false })
+      })
+      .finally(() => {
+        if (!cancelado) setCargandoPerfilAspirante(false)
       })
 
     return () => {
@@ -115,12 +148,33 @@ function Vacantes() {
     ? (profesionesPorNivel[nivelFiltro] || []).filter((p) => p.areaEstudio === areaEstudioFiltro)
     : (profesionesPorNivel[nivelFiltro] || [])
 
-  // El filtro se va afinando: sin Nivel elegido se muestran todos los
-  // puestos; con Nivel (y opcionalmente Área de estudio y/o Profesión) solo
-  // se muestran los que piden, entre sus escolaridades mínimas, alguna
-  // profesión que coincida con lo elegido — terminando en la especialidad
-  // concreta cuando ya se eligió una.
-  const perfilesFiltrados = perfilesPuesto.filter((perfil) => {
+  // Profesiones del usuario en sesión (formación académica) — el criterio
+  // real de emparejamiento es por ProfesionId exacto, no por Nivel, igual
+  // que en el resto del proyecto (ver CrearProfesionesYCertificaciones.sql).
+  const misProfesionIds = useMemo(() => {
+    const formacion = perfilAspirante?.existe ? perfilAspirante.formacionAcademica || [] : []
+    return new Set(
+      formacion
+        .map((f) => f.profesionId)
+        .filter((id) => id !== null && id !== undefined)
+        .map(String)
+    )
+  }, [perfilAspirante])
+
+  const coincideConMiPerfil = (perfil) =>
+    (perfil.escolaridades || []).some((e) => misProfesionIds.has(String(e.profesionId)))
+
+  // "Para ti": puestos que piden, entre sus escolaridades mínimas, alguna
+  // profesión que el usuario ya tiene registrada. "Más Puestos": todo lo
+  // demás, para no repetir en una pestaña lo que ya se muestra en la otra.
+  const perfilesParaTi = perfilesPuesto.filter(coincideConMiPerfil)
+  const perfilesMasPuestos = perfilesPuesto.filter((perfil) => !coincideConMiPerfil(perfil))
+
+  // El filtro por especialidad (Nivel → Área de estudio → Profesión) solo
+  // aplica en "Más Puestos": sin Nivel elegido se muestran todos; con Nivel
+  // (y opcionalmente Área de estudio y/o Profesión) solo los que piden,
+  // entre sus escolaridades mínimas, alguna profesión que coincida.
+  const perfilesMasPuestosFiltrados = perfilesMasPuestos.filter((perfil) => {
     if (!nivelFiltro) return true
 
     const escolaridades = perfil.escolaridades || []
@@ -136,6 +190,9 @@ function Vacantes() {
     return escolaridades.some((e) => profesionesPorId[e.profesionId]?.nivel === nivelFiltro)
   })
 
+  const perfilesAMostrar = pestana === 'paraTi' ? perfilesParaTi : perfilesMasPuestosFiltrados
+  const hayFiltrosActivos = nivelFiltro || areaEstudioFiltro || profesionIdFiltro
+
   if (cargando) {
     return (
       <section className="mx-auto max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6 text-center shadow-sm md:p-10">
@@ -148,7 +205,7 @@ function Vacantes() {
     return <Navigate to="/login" replace />
   }
 
-  if (cargandoPerfiles) {
+  if (cargandoPerfiles || cargandoPerfilAspirante) {
     return (
       <section className="mx-auto max-w-xl rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6 text-center shadow-sm md:p-10">
         <p className="text-[var(--muted)]">Cargando…</p>
@@ -158,16 +215,46 @@ function Vacantes() {
 
   return (
     <section className="mx-auto max-w-5xl rounded-2xl border border-[var(--border)] bg-[var(--card)] p-6 shadow-sm md:p-10">
-      <div className="mb-6">
-        <h2 className="text-2xl font-bold text-[var(--text)]">Puestos para ti</h2>
-        <p className="text-[var(--muted)]">Consulta puestos relacionados con tu perfil.</p>
+      <div className="mb-4">
+        <h2 className="text-2xl font-bold text-[var(--text)]">Puestos</h2>
       </div>
 
-      {!error && (
+      <div className="mb-4 flex gap-2 border-b border-[var(--border)]">
+        <button
+          type="button"
+          onClick={() => setPestana('paraTi')}
+          className={`px-4 py-2 text-sm font-semibold transition ${
+            pestana === 'paraTi'
+              ? 'border-b-2 border-siatec-600 text-siatec-600'
+              : 'text-[var(--muted)] hover:text-[var(--text)]'
+          }`}
+        >
+          Para ti
+        </button>
+        <button
+          type="button"
+          onClick={() => setPestana('masPuestos')}
+          className={`px-4 py-2 text-sm font-semibold transition ${
+            pestana === 'masPuestos'
+              ? 'border-b-2 border-siatec-600 text-siatec-600'
+              : 'text-[var(--muted)] hover:text-[var(--text)]'
+          }`}
+        >
+          Más Puestos
+        </button>
+      </div>
+
+      <p className="mb-6 text-[var(--muted)]">
+        {pestana === 'paraTi'
+          ? 'Puestos que te podrían interesar en base a tu perfil.'
+          : 'Explora más puestos de todas las áreas.'}
+      </p>
+
+      {!error && pestana === 'masPuestos' && (
         <div className="mb-6 rounded-xl border border-[var(--border)] bg-[var(--surface)] p-4">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
             <p className="text-sm font-medium text-[var(--text)]">Filtrar por especialidad</p>
-            {(nivelFiltro || areaEstudioFiltro || profesionIdFiltro) && (
+            {hayFiltrosActivos && (
               <button
                 type="button"
                 onClick={limpiarFiltros}
@@ -246,9 +333,27 @@ function Vacantes() {
         <div className="rounded-xl border border-dashed border-siatec-500/60 bg-siatec-500/10 p-6 text-center">
           <p className="font-semibold text-[var(--text)]">No hay perfiles de puesto registrados todavía.</p>
         </div>
-      ) : perfilesFiltrados.length === 0 ? (
+      ) : perfilesAMostrar.length === 0 ? (
         <div className="rounded-xl border border-dashed border-siatec-500/60 bg-siatec-500/10 p-6 text-center">
-          <p className="font-semibold text-[var(--text)]">Ningún puesto pide la especialidad que elegiste.</p>
+          {pestana === 'paraTi' ? (
+            misProfesionIds.size === 0 ? (
+              <p className="font-semibold text-[var(--text)]">
+                Todavía no tienes una profesión registrada en tu perfil. Complétala para que
+                podamos mostrarte puestos afines aquí.
+              </p>
+            ) : (
+              <p className="font-semibold text-[var(--text)]">
+                Por ahora no hay puestos que coincidan con las profesiones de tu perfil. Explora
+                la pestaña "Más Puestos" para ver el resto de las vacantes disponibles.
+              </p>
+            )
+          ) : hayFiltrosActivos ? (
+            <p className="font-semibold text-[var(--text)]">Ningún puesto pide la especialidad que elegiste.</p>
+          ) : (
+            <p className="font-semibold text-[var(--text)]">
+              No hay más puestos por explorar: todos los disponibles ya aparecen en "Para ti".
+            </p>
+          )}
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-[var(--border)]">
@@ -258,13 +363,12 @@ function Vacantes() {
                 <th className="px-4 py-3 font-semibold">Código</th>
                 <th className="px-4 py-3 font-semibold">Puesto</th>
                 <th className="px-4 py-3 font-semibold">Área</th>
-                <th className="px-4 py-3 font-semibold">Estado</th>
                 <th className="px-4 py-3 font-semibold">Escolaridad(es) mínima(s)</th>
                 <th className="px-4 py-3 font-semibold text-right">&nbsp;</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-[var(--border)]">
-              {perfilesFiltrados.map((perfil) => (
+              {perfilesAMostrar.map((perfil) => (
                 <tr
                   key={perfil.id}
                   onClick={() => navigate(`/puestos/${perfil.id}`)}
@@ -273,7 +377,6 @@ function Vacantes() {
                   <td className="px-4 py-3 font-medium text-[var(--text)]">{perfil.codigoPerfil}</td>
                   <td className="px-4 py-3 text-[var(--muted)]">{perfil.version?.nombrePuesto ?? '—'}</td>
                   <td className="px-4 py-3 text-[var(--muted)]">{perfil.areaNombre ?? 'Sin área asignada'}</td>
-                  <td className="px-4 py-3 text-[var(--muted)] capitalize">{perfil.estadoActual ?? '—'}</td>
                   <td className="px-4 py-3 text-[var(--muted)]">
                     {/* Solo el nombre: en el catálogo de profesiones el
                         Nombre ya trae el nivel incluido cuando aplica (p. ej.

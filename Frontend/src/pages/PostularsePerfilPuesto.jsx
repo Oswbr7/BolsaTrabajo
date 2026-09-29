@@ -34,13 +34,12 @@ const formularioVacio = {
  * ni área de interés — aquí la "escolaridad" ya la define el propio perfil
  * de puesto, no algo que el aspirante elija.
  *
- * TODAVÍA SIN ENVÍO REAL A PROPÓSITO: esta entrega es solo la vista del
- * formulario (campos, precarga desde el perfil del aspirante si tiene
- * sesión, y la zona de "Documentación requerida" armada dinámicamente con
- * los documentos de este perfil de puesto). Guardar la postulación de
- * verdad — tabla, endpoint, subida de archivos — es un desarrollo
- * posterior; el botón de enviar por ahora solo avisa que todavía no está
- * disponible.
+ * Envía de verdad a POST /api/postulacionespuesto (requiere sesión, igual
+ * que ya exige esta página) — el backend valida y guarda en
+ * dbo.RRHH_Reclutamiento_PostulacionesPuesto y su tabla hija de documentos.
+ * Solo se permite una postulación por usuario por vacante: al montar se
+ * consulta GET /api/postulacionespuesto/mia/:id para deshabilitar el
+ * formulario si ya se postuló antes a este mismo puesto.
  */
 function PostularsePerfilPuesto() {
   const { usuario, cargando } = useSesion()
@@ -54,8 +53,11 @@ function PostularsePerfilPuesto() {
   const [form, setForm] = useState(formularioVacio)
   const [comprobanteEstudios, setComprobanteEstudios] = useState(null)
   const [archivosPorDocumento, setArchivosPorDocumento] = useState({})
+  const [archivosPorCertificacion, setArchivosPorCertificacion] = useState({})
   const [perfilPrecargado, setPerfilPrecargado] = useState(false)
   const [feedback, setFeedback] = useState({ type: '', message: '' })
+  const [enviando, setEnviando] = useState(false)
+  const [yaSePostulo, setYaSePostulo] = useState(false)
 
   // Perfil de puesto al que se está postulando: header (puesto/código) y
   // los documentos requeridos vigentes (Activo) para armar la zona de
@@ -80,6 +82,29 @@ function PostularsePerfilPuesto() {
       })
       .finally(() => {
         if (!cancelado) setCargandoPerfilPuesto(false)
+      })
+
+    return () => {
+      cancelado = true
+    }
+  }, [usuario, id])
+
+  // Una sola postulación por usuario por vacante: si ya existe una para
+  // este perfil de puesto, se deshabilita el formulario en vez de dejar
+  // que el envío truene con el 409 del backend.
+  useEffect(() => {
+    if (!usuario) return
+
+    let cancelado = false
+
+    axios
+      .get(`/api/postulacionespuesto/mia/${id}`)
+      .then((response) => {
+        if (!cancelado) setYaSePostulo(Boolean(response.data?.existe))
+      })
+      .catch(() => {
+        // Si falla la consulta, se deja el formulario habilitado — el
+        // backend igual rechaza con 409 si de verdad ya existía.
       })
 
     return () => {
@@ -157,15 +182,121 @@ function PostularsePerfilPuesto() {
     setArchivosPorDocumento((actual) => ({ ...actual, [documentoId]: file }))
   }
 
-  const handleSubmit = (e) => {
+  const handleCertificacionFileChange = (certificacionId) => (e) => {
+    const file = e.target.files[0] || null
+    setArchivosPorCertificacion((actual) => ({ ...actual, [certificacionId]: file }))
+  }
+
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    // Todavía sin envío real a propósito — ver el comentario al inicio del
-    // archivo. Se avisa explícitamente en vez de no hacer nada, para no dar
-    // la impresión de que la postulación ya se guardó.
-    setFeedback({
-      type: 'info',
-      message: 'El envío de este formulario todavía no está disponible. Pronto podrás mandar tu postulación desde aquí.',
+
+    if (yaSePostulo) {
+      setFeedback({ type: 'error', message: 'Ya tienes una postulación registrada para esta vacante.' })
+      return
+    }
+
+    if (
+      !form.nombre ||
+      !form.apellidoPaterno ||
+      !form.rfc ||
+      !form.curp ||
+      !form.estado ||
+      !form.telefono ||
+      !form.correo ||
+      !form.expectativasSalariales ||
+      !comprobanteEstudios
+    ) {
+      setFeedback({ type: 'error', message: 'Completa todos los campos obligatorios y adjunta el comprobante de estudios.' })
+      return
+    }
+
+    if (form.rfc.length !== RFC_LONGITUD) {
+      setFeedback({ type: 'error', message: `El RFC debe tener ${RFC_LONGITUD} caracteres.` })
+      return
+    }
+
+    if (form.curp.length !== CURP_LONGITUD) {
+      setFeedback({ type: 'error', message: `El CURP debe tener ${CURP_LONGITUD} caracteres.` })
+      return
+    }
+
+    // Cada documento obligatorio (de los vigentes) debe tener su archivo
+    // antes de mandar — mismo criterio que valida el backend.
+    const documentoObligatorioFaltante = documentosRequeridos.find(
+      (documento) => documento.obligatorio && !archivosPorDocumento[documento.id]
+    )
+    if (documentoObligatorioFaltante) {
+      setFeedback({ type: 'error', message: `Falta el archivo del documento obligatorio "${documentoObligatorioFaltante.nombre}".` })
+      return
+    }
+
+    // Certificaciones: a diferencia de los documentos, aquí TODAS las que
+    // pida el puesto son obligatorias — mismo criterio que valida el
+    // backend (esa tabla no tiene columna Obligatorio).
+    const certificacionFaltante = certificacionesRequeridas.find(
+      (certificacion) => !archivosPorCertificacion[certificacion.id]
+    )
+    if (certificacionFaltante) {
+      setFeedback({ type: 'error', message: `Falta el archivo de la certificación "${certificacionFaltante.nombre}".` })
+      return
+    }
+
+    const data = new FormData()
+    data.append('perfilPuestoId', id)
+    data.append('nombre', form.nombre)
+    data.append('apellidoPaterno', form.apellidoPaterno)
+    if (form.apellidoMaterno) {
+      data.append('apellidoMaterno', form.apellidoMaterno)
+    }
+    // Nombres distintos a "rfc"/"curp" a propósito, mismo criterio que
+    // Postulacion.jsx: el backend los recibe como rfcTexto/curpTexto.
+    data.append('rfcTexto', form.rfc)
+    data.append('curpTexto', form.curp)
+    data.append('estado', form.estado)
+    if (form.municipio) {
+      data.append('municipio', form.municipio)
+    }
+    data.append('telefono', form.telefono)
+    data.append('correo', form.correo)
+    data.append('expectativasSalariales', form.expectativasSalariales)
+    if (form.habilidadesClave) {
+      data.append('habilidadesClave', form.habilidadesClave)
+    }
+    data.append('comprobanteEstudios', comprobanteEstudios)
+
+    // Listas paralelas (mismo índice = mismo documento), igual que
+    // certificacionesNombres/certificacionesArchivos en Postulacion.jsx.
+    documentosRequeridos.forEach((documento) => {
+      const archivo = archivosPorDocumento[documento.id]
+      if (archivo) {
+        data.append('documentosIds', documento.id)
+        data.append('documentosArchivos', archivo)
+      }
     })
+
+    certificacionesRequeridas.forEach((certificacion) => {
+      const archivo = archivosPorCertificacion[certificacion.id]
+      if (archivo) {
+        data.append('certificacionesIds', certificacion.id)
+        data.append('certificacionesArchivos', archivo)
+      }
+    })
+
+    setEnviando(true)
+    setFeedback({ type: '', message: '' })
+
+    try {
+      await axios.post('/api/postulacionespuesto', data, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      })
+      setFeedback({ type: 'success', message: '¡Postulación enviada correctamente!' })
+      setYaSePostulo(true)
+    } catch (err) {
+      const msg = err.response?.data?.mensaje || 'Ocurrió un error al enviar la postulación.'
+      setFeedback({ type: 'error', message: msg })
+    } finally {
+      setEnviando(false)
+    }
   }
 
   if (cargando) {
@@ -209,14 +340,17 @@ function PostularsePerfilPuesto() {
   const carrerasRequeridas = (perfilPuesto?.escolaridades || [])
     .map((e) => e.profesionNombre)
     .filter(Boolean)
-    .join(', ')
+
+  // Certificaciones que pide el perfil académico de este puesto (tabla de
+  // SIATEC, sin columna Obligatorio): todas son obligatorias de adjuntar.
+  const certificacionesRequeridas = perfilPuesto?.certificaciones || []
 
   const FileField = ({ id, label, required, file, onChange, helpText }) => (
     <div>
       <label htmlFor={id} className="mb-1 block text-sm font-medium text-[var(--text)]">
         {label} {required && <span className="text-red-500">*</span>}
       </label>
-      {helpText && <p className="mb-2 text-xs text-[var(--muted)]">{helpText}</p>}
+      {helpText && <div className="mb-2 text-xs text-[var(--muted)]">{helpText}</div>}
       <div className="flex flex-col gap-2 rounded-lg border border-dashed border-[var(--border)] bg-[var(--surface)] px-4 py-4 shadow-sm transition hover:border-siatec-500 hover:bg-siatec-50 dark:hover:bg-transparent">
         <input
           id={id}
@@ -248,6 +382,12 @@ function PostularsePerfilPuesto() {
       {perfilPrecargado && (
         <div className="mb-6 rounded-lg border border-siatec-200 bg-siatec-50 px-4 py-3 text-sm text-siatec-700 dark:border-siatec-800 dark:bg-siatec-900/30 dark:text-siatec-300">
           Precargamos algunos campos con la información de tu perfil. Puedes editarlos libremente antes de enviar; los cambios que hagas aquí no modifican tu perfil.
+        </div>
+      )}
+
+      {yaSePostulo && (
+        <div className="mb-6 rounded-lg border border-siatec-200 bg-siatec-50 px-4 py-3 text-sm text-siatec-700 dark:border-siatec-800 dark:bg-siatec-900/30 dark:text-siatec-300">
+          Ya tienes una postulación registrada para esta vacante.
         </div>
       )}
 
@@ -457,12 +597,66 @@ function PostularsePerfilPuesto() {
             file={comprobanteEstudios}
             onChange={(e) => setComprobanteEstudios(e.target.files[0] || null)}
             helpText={
-              carrerasRequeridas
-                ? `Carreras que acepta este puesto: ${carrerasRequeridas}`
-                : 'Este puesto no especifica una carrera mínima.'
+              carrerasRequeridas.length > 0 ? (
+                <>
+                  <p className="mb-1">Carreras que acepta este puesto:</p>
+                  <ul className="list-inside list-disc space-y-0.5">
+                    {carrerasRequeridas.map((carrera) => (
+                      <li key={carrera}>{carrera}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : (
+                'Este puesto no especifica una carrera mínima.'
+              )
             }
           />
         </div>
+
+        {certificacionesRequeridas.length > 0 && (
+          <div className="border-t border-[var(--border)] pt-6">
+            <h3 className="mb-1 text-lg font-semibold text-[var(--text)]">Certificaciones requeridas</h3>
+            <p className="mb-4 text-sm text-[var(--muted)]">
+              Este puesto pide las siguientes certificaciones. Adjunta el archivo de cada una.
+            </p>
+
+            <div className="space-y-4">
+              {certificacionesRequeridas.map((certificacion) => (
+                <div
+                  key={certificacion.id}
+                  className="flex flex-col gap-4 rounded-xl border border-[var(--border)] p-4 sm:flex-row sm:items-center sm:justify-between"
+                >
+                  <div className="sm:max-w-xs">
+                    <p className="font-medium text-[var(--text)]">
+                      {certificacion.nombre} <span className="text-red-500">*</span>
+                    </p>
+                    {(certificacion.institucion || certificacion.vigencia) && (
+                      <p className="mt-1 text-xs text-[var(--muted)]">
+                        {[certificacion.institucion, certificacion.vigencia].filter(Boolean).join(' · ')}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="sm:w-64">
+                    <input
+                      id={`certificacion-${certificacion.id}`}
+                      name={`certificacion-${certificacion.id}`}
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      onChange={handleCertificacionFileChange(certificacion.id)}
+                      className="w-full text-sm text-[var(--text)] file:mr-3 file:rounded-md file:border-0 file:bg-siatec-600 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-siatec-700"
+                    />
+                    {archivosPorCertificacion[certificacion.id] && (
+                      <p className="mt-1 text-xs text-[var(--muted)]">
+                        Archivo seleccionado: {archivosPorCertificacion[certificacion.id].name}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="border-t border-[var(--border)] pt-6">
           <h3 className="mb-1 text-lg font-semibold text-[var(--text)]">Documentación requerida</h3>
@@ -483,9 +677,6 @@ function PostularsePerfilPuesto() {
                     <p className="font-medium text-[var(--text)]">
                       {documento.nombre} {documento.obligatorio && <span className="text-red-500">*</span>}
                     </p>
-                    {documento.tipoDocumento && (
-                      <p className="text-xs text-[var(--muted)]">Tipo: {documento.tipoDocumento}</p>
-                    )}
                     {documento.observaciones && (
                       <p className="mt-1 text-xs text-[var(--muted)]">{documento.observaciones}</p>
                     )}
@@ -513,9 +704,10 @@ function PostularsePerfilPuesto() {
 
         <button
           type="submit"
-          className="w-full rounded-lg bg-siatec-600 px-6 py-3 text-base font-semibold text-white shadow transition hover:bg-siatec-700 md:w-auto"
+          disabled={enviando || yaSePostulo}
+          className="w-full rounded-lg bg-siatec-600 px-6 py-3 text-base font-semibold text-white shadow transition hover:bg-siatec-700 disabled:cursor-not-allowed disabled:opacity-60 md:w-auto"
         >
-          Enviar postulación
+          {enviando ? 'Enviando...' : 'Enviar postulación'}
         </button>
       </form>
     </section>

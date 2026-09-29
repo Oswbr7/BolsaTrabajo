@@ -92,6 +92,10 @@ function Postulacion() {
   const [ine, setIne] = useState(null)
   const [rfc, setRfc] = useState(null)
   const [actaNacimiento, setActaNacimiento] = useState(null)
+  // Certificaciones: campo opcional, varias filas, cada una con su propio
+  // nombre + archivo PDF. Empieza vacío — el postulante las agrega con el
+  // botón "+ Agregar certificación" (ver más abajo).
+  const [certificaciones, setCertificaciones] = useState([])
   const [loading, setLoading] = useState(false)
   const [feedback, setFeedback] = useState({ type: '', message: '' })
   const [cargandoAleatorios, setCargandoAleatorios] = useState(false)
@@ -555,6 +559,33 @@ function Postulacion() {
     setFeedback({ type: '', message: '' })
   }
 
+  const handleAgregarCertificacion = () => {
+    setCertificaciones((prev) => [...prev, { nombre: '', archivo: null }])
+  }
+
+  const handleEliminarCertificacion = (indice) => {
+    setCertificaciones((prev) => prev.filter((_, i) => i !== indice))
+  }
+
+  const handleCambiarNombreCertificacion = (indice, valor) => {
+    setCertificaciones((prev) => prev.map((cert, i) => (i === indice ? { ...cert, nombre: valor } : cert)))
+  }
+
+  const handleCambiarArchivoCertificacion = (indice) => (e) => {
+    const file = e.target.files[0]
+    if (!file) {
+      setCertificaciones((prev) => prev.map((cert, i) => (i === indice ? { ...cert, archivo: null } : cert)))
+      return
+    }
+    if (!validatePdf(file)) {
+      setFeedback({ type: 'error', message: 'Solo se permiten archivos PDF.' })
+      e.target.value = ''
+      return
+    }
+    setCertificaciones((prev) => prev.map((cert, i) => (i === indice ? { ...cert, archivo: file } : cert)))
+    setFeedback({ type: '', message: '' })
+  }
+
   const handleSubmit = async (e) => {
     e.preventDefault()
 
@@ -605,6 +636,22 @@ function Postulacion() {
       return
     }
 
+    // Certificaciones: campo opcional, pero una fila que ya se empezó a
+    // llenar debe completarse (nombre + archivo) antes de enviar — si no,
+    // se pide completarla o eliminarla. Una fila totalmente vacía (recién
+    // agregada) no bloquea el envío, simplemente se ignora.
+    for (const certificacion of certificaciones) {
+      const tieneNombre = certificacion.nombre.trim() !== ''
+      const tieneArchivo = !!certificacion.archivo
+      if (tieneNombre !== tieneArchivo) {
+        setFeedback({ type: 'error', message: 'Completa el nombre y el archivo PDF de cada certificación que hayas agregado, o elimina la fila.' })
+        return
+      }
+    }
+    const certificacionesCompletas = certificaciones.filter(
+      (certificacion) => certificacion.nombre.trim() !== '' && certificacion.archivo
+    )
+
     const data = new FormData()
     data.append('nombre', form.nombre)
     data.append('apellidoPaterno', form.apellidoPaterno)
@@ -634,6 +681,10 @@ function Postulacion() {
     if (form.habilidadesClave) {
       data.append('habilidadesClave', form.habilidadesClave)
     }
+    certificacionesCompletas.forEach((certificacion) => {
+      data.append('certificacionesNombres', certificacion.nombre.trim())
+      data.append('certificacionesArchivos', certificacion.archivo)
+    })
 
     setLoading(true)
     setFeedback({ type: '', message: '' })
@@ -666,6 +717,7 @@ function Postulacion() {
       setIne(null)
       setRfc(null)
       setActaNacimiento(null)
+      setCertificaciones([])
       setPerfilPrecargado(false)
       setDocumentosPrecargados([])
       e.target.reset()
@@ -1071,12 +1123,79 @@ function Postulacion() {
 
             <FileField
               id="ultimoComprobanteEstudios"
-              label="Comprobante de estudios en PDF"
+              label="Comprobante de estudios máximos en PDF"
               required
               file={comprobante}
               onChange={handleFileChange(setComprobante, true)}
               colorClass="file:bg-siatec-600 hover:file:bg-siatec-700"
             />
+          </div>
+
+          <div className="border-t border-[var(--border)] pt-6">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div>
+                <h3 className="text-sm font-medium text-[var(--text)]">Certificaciones</h3>
+                <p className="text-xs text-[var(--muted)]">Campo opcional. Agrega las certificaciones que quieras, cada una con su propio archivo en PDF.</p>
+              </div>
+              <button
+                type="button"
+                onClick={handleAgregarCertificacion}
+                className="whitespace-nowrap rounded-lg border border-siatec-600 px-3 py-1.5 text-sm font-semibold text-siatec-600 transition hover:bg-siatec-50 dark:hover:bg-transparent"
+              >
+                + Agregar certificación
+              </button>
+            </div>
+
+            {certificaciones.length === 0 && (
+              <p className="text-xs text-[var(--muted)]">No has agregado ninguna certificación.</p>
+            )}
+
+            <div className="space-y-4">
+              {certificaciones.map((certificacion, indice) => (
+                <div
+                  key={indice}
+                  className="grid gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface)] p-4 md:grid-cols-[1fr_1fr_auto] md:items-start"
+                >
+                  <div>
+                    <label htmlFor={`certificacionNombre-${indice}`} className="mb-1 block text-sm font-medium text-[var(--text)]">
+                      Nombre de la certificación
+                    </label>
+                    <input
+                      id={`certificacionNombre-${indice}`}
+                      type="text"
+                      value={certificacion.nombre}
+                      onChange={(e) => handleCambiarNombreCertificacion(indice, e.target.value)}
+                      placeholder="Ej. Certificación en Excel Avanzado"
+                      className="w-full rounded-lg border border-[var(--border)] bg-[var(--surface)] px-4 py-2.5 text-[var(--text)] shadow-sm outline-none transition focus:border-siatec-500 focus:ring-2 focus:ring-siatec-500/20"
+                    />
+                  </div>
+
+                  <div>
+                    <label htmlFor={`certificacionArchivo-${indice}`} className="mb-1 block text-sm font-medium text-[var(--text)]">
+                      Archivo en PDF
+                    </label>
+                    <input
+                      id={`certificacionArchivo-${indice}`}
+                      type="file"
+                      accept=".pdf,application/pdf"
+                      onChange={handleCambiarArchivoCertificacion(indice)}
+                      className="text-sm text-[var(--text)] file:mr-4 file:rounded-md file:border-0 file:bg-siatec-600 hover:file:bg-siatec-700 file:px-4 file:py-2 file:text-sm file:font-semibold file:text-white"
+                    />
+                    {certificacion.archivo && (
+                      <p className="mt-2 text-xs text-[var(--muted)]">Archivo seleccionado: {certificacion.archivo.name}</p>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleEliminarCertificacion(indice)}
+                    className="whitespace-nowrap rounded-lg border border-red-300 px-3 py-1.5 text-sm font-semibold text-red-600 transition hover:bg-red-50 md:mt-6 dark:border-red-700 dark:hover:bg-transparent"
+                  >
+                    Eliminar
+                  </button>
+                </div>
+              ))}
+            </div>
           </div>
 
           <button

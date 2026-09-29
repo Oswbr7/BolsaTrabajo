@@ -9,6 +9,14 @@ namespace Backend.Data
 
         public DbSet<Postulacion> Postulaciones { get; set; }
 
+        public DbSet<PostulacionCertificacion> PostulacionesCertificaciones { get; set; }
+
+        public DbSet<PostulacionPuesto> PostulacionesPuesto { get; set; }
+
+        public DbSet<PostulacionPuestoDocumento> PostulacionesPuestoDocumentos { get; set; }
+
+        public DbSet<PostulacionPuestoCertificacion> PostulacionesPuestoCertificaciones { get; set; }
+
         public DbSet<Area> Areas { get; set; }
 
         public DbSet<Profesion> Profesiones { get; set; }
@@ -43,6 +51,8 @@ namespace Backend.Data
 
         public DbSet<PerfilPuestoFuncion> PerfilesPuestoFunciones { get; set; }
 
+        public DbSet<PerfilPuestoCertificacion> PerfilesPuestoCertificaciones { get; set; }
+
         protected override void OnModelCreating(ModelBuilder modelBuilder)
         {
             base.OnModelCreating(modelBuilder);
@@ -52,6 +62,40 @@ namespace Backend.Data
             // de en una tabla genérica "Postulaciones" que podría confundirse o chocar con
             // algo existente.
             modelBuilder.Entity<Postulacion>().ToTable("RRHH_Reclutamiento_Postulaciones", schema: "dbo");
+
+            // Certificaciones adjuntas por el postulante (sección opcional,
+            // varias filas, ver Models/PostulacionCertificacion.cs). Sin
+            // navegación de EF hacia Postulacion, mismo criterio que el
+            // resto del proyecto: PostulacionesController resuelve el FK
+            // con consultas aparte.
+            modelBuilder.Entity<PostulacionCertificacion>(entidad =>
+            {
+                entidad.ToTable("RRHH_Reclutamiento_Postulaciones_Certificaciones", schema: "dbo");
+                entidad.HasIndex(c => c.PostulacionId);
+            });
+
+            // Postulación a un perfil de puesto específico (formulario
+            // "Postularme" en PostularsePerfilPuesto.jsx), distinta del
+            // registro general de arriba — ver Models/PostulacionPuesto.cs.
+            // Una sola postulación por usuario por vacante.
+            modelBuilder.Entity<PostulacionPuesto>(entidad =>
+            {
+                entidad.ToTable("RRHH_Reclutamiento_PostulacionesPuesto", schema: "dbo");
+                entidad.HasIndex(p => new { p.UsuarioId, p.PerfilPuestoId }).IsUnique();
+                entidad.HasIndex(p => p.PerfilPuestoId);
+            });
+
+            modelBuilder.Entity<PostulacionPuestoDocumento>(entidad =>
+            {
+                entidad.ToTable("RRHH_Reclutamiento_PostulacionesPuesto_Documentos", schema: "dbo");
+                entidad.HasIndex(d => new { d.PostulacionPuestoId, d.PerfilPuestoDocumentoId }).IsUnique();
+            });
+
+            modelBuilder.Entity<PostulacionPuestoCertificacion>(entidad =>
+            {
+                entidad.ToTable("RRHH_Reclutamiento_PostulacionesPuesto_Certificaciones", schema: "dbo");
+                entidad.HasIndex(c => new { c.PostulacionPuestoId, c.PerfilPuestoCertificacionId }).IsUnique();
+            });
 
             // Catálogo compartido de áreas de interés (ver "Plan de Flujo -
             // Filtrado de Postulantes por Area en SIATEC.md"). El nombre es
@@ -188,6 +232,14 @@ namespace Backend.Data
 
             modelBuilder.Entity<PerfilPuestoFuncion>()
                 .ToTable("RRHH_Reclutamiento_PerfilesPuesto_Funciones", schema: "dbo");
+
+            // Certificaciones que pide el perfil académico de una versión de
+            // perfil de puesto (tabla de la otra plataforma, SIATEC — ver
+            // Models/PerfilPuestoCertificacion.cs y la entrada 17 de
+            // "Bolsa de Trabajo - SQL.md"). Sin script de creación de este
+            // lado: la tabla ya existe, solo se mapea para leerla.
+            modelBuilder.Entity<PerfilPuestoCertificacion>()
+                .ToTable("RRHH_Reclutamiento_PerfilesPuesto_Certificaciones", schema: "dbo");
         }
     }
 }

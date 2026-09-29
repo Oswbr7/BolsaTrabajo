@@ -88,6 +88,10 @@ namespace Backend.Controllers
                 .AsNoTracking()
                 .ToListAsync();
 
+            var certificaciones = await _context.PerfilesPuestoCertificaciones
+                .AsNoTracking()
+                .ToListAsync();
+
             // Catálogos completos traídos aparte: son chicos y no crecen lo
             // suficiente como para que valga la pena filtrar por id.
             var areasPorId = await _context.Areas
@@ -113,6 +117,10 @@ namespace Backend.Controllers
                 .GroupBy(f => f.VersionId)
                 .ToDictionary(g => g.Key, g => g.OrderBy(f => f.Orden).ToList());
 
+            var certificacionesPorVersion = certificaciones
+                .GroupBy(c => c.VersionId)
+                .ToDictionary(g => g.Key, g => g.OrderBy(c => c.Orden).ToList());
+
             var datos = perfiles
                 .Select(pp =>
                 {
@@ -129,6 +137,10 @@ namespace Backend.Controllers
                     var funcionesDeLaVersion = version != null && funcionesPorVersion.TryGetValue(version.Id, out var listaFunciones)
                         ? listaFunciones
                         : new List<Models.PerfilPuestoFuncion>();
+
+                    var certificacionesDeLaVersion = version != null && certificacionesPorVersion.TryGetValue(version.Id, out var listaCertificaciones)
+                        ? listaCertificaciones
+                        : new List<Models.PerfilPuestoCertificacion>();
 
                     return new PerfilPuestoResumen
                     {
@@ -190,6 +202,14 @@ namespace Backend.Controllers
                             Critica = f.Critica,
                             Activa = f.Activa,
                         }).ToList(),
+                        Certificaciones = certificacionesDeLaVersion.Select(c => new PerfilPuestoCertificacionResumen
+                        {
+                            Id = c.Id,
+                            Nombre = c.Nombre,
+                            Institucion = c.Institucion,
+                            Vigencia = c.Vigencia,
+                            Orden = c.Orden,
+                        }).ToList(),
                     };
                 })
                 // Sin perfil vigente encontrado (VersionActual apunta a un
@@ -217,6 +237,7 @@ namespace Backend.Controllers
             public List<PerfilPuestoEscolaridadResumen> Escolaridades { get; set; } = new();
             public List<PerfilPuestoDocumentoResumen> Documentos { get; set; } = new();
             public List<PerfilPuestoFuncionResumen> Funciones { get; set; } = new();
+            public List<PerfilPuestoCertificacionResumen> Certificaciones { get; set; } = new();
         }
 
         private sealed class PerfilPuestoVersionResumen
@@ -263,6 +284,15 @@ namespace Backend.Controllers
             public bool Obligatoria { get; set; }
             public bool Critica { get; set; }
             public bool Activa { get; set; }
+        }
+
+        private sealed class PerfilPuestoCertificacionResumen
+        {
+            public int Id { get; set; }
+            public string Nombre { get; set; } = string.Empty;
+            public string Institucion { get; set; } = string.Empty;
+            public string Vigencia { get; set; } = string.Empty;
+            public int Orden { get; set; }
         }
     }
 }

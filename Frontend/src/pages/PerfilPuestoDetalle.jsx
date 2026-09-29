@@ -91,9 +91,7 @@ function PerfilPuestoDetalle() {
       <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold text-[var(--text)]">{version?.nombrePuesto ?? 'Puesto sin nombre'}</h2>
-          <p className="text-[var(--muted)]">
-            Código: {perfil.codigoPerfil} · Estado: <span className="capitalize">{perfil.estadoActual}</span>
-          </p>
+          <p className="text-[var(--muted)]">Código: {perfil.codigoPerfil}</p>
         </div>
         <button
           type="button"
@@ -144,10 +142,8 @@ function PerfilPuestoDetalle() {
                 <dd className="text-[var(--text)]">{version.puestoSuperior || 'Sin especificar'}</dd>
               </div>
               <div>
-                <dt className="text-[var(--muted)]">Vigencia</dt>
-                <dd className="text-[var(--text)]">
-                  {version.vigenciaInicio || '—'} – {version.vigenciaFin || 'sin fecha de fin'}
-                </dd>
+                <dt className="text-[var(--muted)]">Apertura</dt>
+                <dd className="text-[var(--text)]">{version.vigenciaInicio || '—'}</dd>
               </div>
             </dl>
           </div>
@@ -167,7 +163,6 @@ function PerfilPuestoDetalle() {
                       <th className="px-3 py-2 font-semibold">Descripción</th>
                       <th className="px-3 py-2 font-semibold">Obligatoria</th>
                       <th className="px-3 py-2 font-semibold">Crítica</th>
-                      <th className="px-3 py-2 font-semibold">Activa</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-[var(--border)]">
@@ -176,7 +171,6 @@ function PerfilPuestoDetalle() {
                         <td className="px-3 py-2 font-medium text-[var(--text)]">{f.descripcion}</td>
                         <td className="px-3 py-2 text-[var(--muted)]">{f.obligatoria ? 'Sí' : 'No'}</td>
                         <td className="px-3 py-2 text-[var(--muted)]">{f.critica ? 'Sí' : 'No'}</td>
-                        <td className="px-3 py-2 text-[var(--muted)]">{f.activa ? 'Sí' : 'No'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -217,9 +211,6 @@ function PerfilPuestoDetalle() {
                   <thead className="bg-[var(--surface)] text-[var(--muted)]">
                     <tr>
                       <th className="px-3 py-2 font-semibold">Documento</th>
-                      <th className="px-3 py-2 font-semibold">Tipo</th>
-                      <th className="px-3 py-2 font-semibold">Obligatorio</th>
-                      <th className="px-3 py-2 font-semibold">Activo</th>
                       <th className="px-3 py-2 font-semibold">Observaciones</th>
                     </tr>
                   </thead>
@@ -227,9 +218,6 @@ function PerfilPuestoDetalle() {
                     {perfil.documentos.map((d, indice) => (
                       <tr key={indice}>
                         <td className="px-3 py-2 font-medium text-[var(--text)]">{d.nombre}</td>
-                        <td className="px-3 py-2 text-[var(--muted)]">{d.tipoDocumento || 'Sin especificar'}</td>
-                        <td className="px-3 py-2 text-[var(--muted)]">{d.obligatorio ? 'Sí' : 'No'}</td>
-                        <td className="px-3 py-2 text-[var(--muted)]">{d.activo ? 'Sí' : 'No'}</td>
                         <td className="px-3 py-2 text-[var(--muted)]">{d.observaciones || '—'}</td>
                       </tr>
                     ))}

@@ -47,7 +47,14 @@ namespace Backend.Controllers
             // "rfc" ya lo usa el IFormFile de arriba (el PDF escaneado) — estos
             // son el código alfanumérico capturado como texto, algo distinto.
             [FromForm] string? rfcTexto = null,
-            [FromForm] string? curpTexto = null)
+            [FromForm] string? curpTexto = null,
+            // Certificaciones (opcional, varias filas): el formulario manda
+            // un par "certificacionesNombres"/"certificacionesArchivos" por
+            // cada fila que el postulante haya llenado, en el mismo orden en
+            // que las agregó. Ambas listas llegan vacías si no capturó
+            // ninguna — es un campo no obligatorio.
+            [FromForm] List<string>? certificacionesNombres = null,
+            List<IFormFile>? certificacionesArchivos = null)
         {
             // El formulario sigue siendo público (sin [Authorize]): esto no
             // exige sesión, solo la aprovecha si ya existe. La cookie de
@@ -206,6 +213,55 @@ namespace Backend.Controllers
                 return BadRequest(new { mensaje = "El acta de nacimiento debe ser un archivo PDF." });
             }
 
+            // Certificaciones: campo opcional, pero si el postulante llenó
+            // alguna fila, esa fila debe venir completa (nombre + archivo
+            // PDF) — no se aceptan filas a medias. Cero filas es válido.
+            var certificacionesNombresRecibidas = certificacionesNombres ?? new List<string>();
+            var certificacionesArchivosRecibidos = certificacionesArchivos ?? new List<IFormFile>();
+
+            if (certificacionesNombresRecibidas.Count != certificacionesArchivosRecibidos.Count)
+            {
+                return BadRequest(new { mensaje = "Cada certificación debe tener un nombre y un archivo PDF." });
+            }
+
+            var certificacionesAGuardar = new List<PostulacionCertificacion>();
+            for (var i = 0; i < certificacionesNombresRecibidas.Count; i++)
+            {
+                var nombreCertificacion = certificacionesNombresRecibidas[i];
+                var archivoCertificacion = certificacionesArchivosRecibidos[i];
+
+                if (string.IsNullOrWhiteSpace(nombreCertificacion))
+                {
+                    return BadRequest(new { mensaje = "Cada certificación debe tener un nombre." });
+                }
+
+                if (archivoCertificacion == null || archivoCertificacion.Length == 0)
+                {
+                    return BadRequest(new { mensaje = $"Falta el archivo PDF de la certificación \"{nombreCertificacion.Trim()}\"." });
+                }
+
+                if (!archivoCertificacion.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ||
+                    archivoCertificacion.ContentType != "application/pdf")
+                {
+                    return BadRequest(new { mensaje = $"La certificación \"{nombreCertificacion.Trim()}\" debe ser un archivo PDF." });
+                }
+
+                byte[] archivoCertificacionBytes;
+                using (var ms = new MemoryStream())
+                {
+                    await archivoCertificacion.CopyToAsync(ms);
+                    archivoCertificacionBytes = ms.ToArray();
+                }
+
+                certificacionesAGuardar.Add(new PostulacionCertificacion
+                {
+                    Nombre = nombreCertificacion.Trim(),
+                    ArchivoFileName = archivoCertificacion.FileName,
+                    ArchivoBytes = archivoCertificacionBytes,
+                    Orden = i + 1
+                });
+            }
+
             byte[] cvBytes;
             using (var ms = new MemoryStream())
             {
@@ -294,6 +350,17 @@ namespace Backend.Controllers
 
             _context.Postulaciones.Add(postulacion);
             await _context.SaveChangesAsync();
+
+            if (certificacionesAGuardar.Count > 0)
+            {
+                foreach (var certificacion in certificacionesAGuardar)
+                {
+                    certificacion.PostulacionId = postulacion.Id;
+                }
+
+                _context.PostulacionesCertificaciones.AddRange(certificacionesAGuardar);
+                await _context.SaveChangesAsync();
+            }
 
             _logger.LogInformation("Postulacion registrada: {Correo}", postulacion.Correo);
 
