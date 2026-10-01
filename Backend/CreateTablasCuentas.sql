@@ -644,10 +644,12 @@ GO
 
 -- ---------------------------------------------------------------------
 -- 12. RRHH_Reclutamiento_DocumentosAspirante — NUEVO (CU-04)
---     TipoDocumento: 1=Ine, 2=Rfc, 3=ActaNacimiento, 4=CartillaMilitar,
---                    5=RecomendacionLaboral, 6=RecomendacionPersonal,
---                    7=ComprobanteEstudios.
---     Los siete tipos son de "slot único": subir uno nuevo marca el
+--     TipoDocumento: 1=Ine, 2=Rfc (mostrado en el frontend como
+--                    "Constancia de Situación Fiscal"), 3=ActaNacimiento,
+--                    4=CartillaMilitar, 5=RecomendacionLaboral,
+--                    6=RecomendacionPersonal, 7=ComprobanteEstudios,
+--                    8=ComprobanteDomicilio, 9=Curp, 10=CedulaProfesional.
+--     Los diez tipos son de "slot único": subir uno nuevo marca el
 --     anterior como Vigente = 0 (se conserva como versión histórica) en
 --     vez de sobrescribirlo o borrarlo.
 -- ---------------------------------------------------------------------
@@ -663,14 +665,14 @@ BEGIN
         TamanioBytes            BIGINT          NOT NULL,
         ContenidoCifrado        VARBINARY(MAX)  NOT NULL, -- AES-256; el IV va antepuesto en los primeros 16 bytes
         HashSha256              CHAR(64)        NOT NULL, -- hash del contenido original, antes de cifrar
-        FechaVigencia           DATE            NULL,     -- opcional para los siete tipos
+        FechaVigencia           DATE            NULL,     -- opcional para los diez tipos
         NumeroVersion           INT             NOT NULL DEFAULT (1),
         Vigente                 BIT             NOT NULL DEFAULT (1),
         FechaCarga              DATETIME2       NOT NULL DEFAULT (SYSUTCDATETIME()),
         FechaEliminacion        DATETIME2       NULL,     -- borrado lógico
 
         CONSTRAINT PK_DocumentosAspirante PRIMARY KEY CLUSTERED (Id ASC),
-        CONSTRAINT CK_DocumentosAspirante_TipoDocumento CHECK (TipoDocumento BETWEEN 1 AND 7),
+        CONSTRAINT CK_DocumentosAspirante_TipoDocumento CHECK (TipoDocumento BETWEEN 1 AND 10),
         CONSTRAINT FK_DocumentosAspirante_Usuarios FOREIGN KEY (UsuarioId)
             REFERENCES dbo.RRHH_Reclutamiento_Usuarios (Id)
             ON DELETE CASCADE

@@ -30,7 +30,7 @@ namespace Backend.Models
         public string HashSha256 { get; set; } = string.Empty;
 
         /// <summary>
-        /// Fecha de vigencia del documento, opcional para los siete tipos.
+        /// Fecha de vigencia del documento, opcional para los diez tipos.
         /// Si es nulo, el documento no participa en el cálculo de "por vencer"
         /// (CU-04, flujo alterno A4) y se considera vigente mientras no se
         /// reemplace.

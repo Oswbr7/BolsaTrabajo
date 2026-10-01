@@ -23,6 +23,16 @@ namespace Backend.Controllers
         private const int RfcLongitud = 13;
         private const int CurpLongitud = 18;
 
+        // Formatos que acepta "Documentación requerida" (PerfilPuestoDocumento):
+        // los mismos tres que ya acepta Documentos.jsx/DocumentosController
+        // (CU-04), porque ahora PostularsePerfilPuesto.jsx puede precargar
+        // aquí un documento que el aspirante ya tenía cargado en su perfil, y
+        // ese documento pudo haberse guardado como JPG/PNG, no solo PDF.
+        // Comprobante de estudios y certificaciones NO cambian: siguen
+        // exigiendo PDF, es una regla de negocio aparte que no se tocó.
+        private static readonly string[] ExtensionesDocumentoPermitidas = { ".pdf", ".jpg", ".jpeg", ".png" };
+        private static readonly string[] ContentTypesDocumentoPermitidos = { "application/pdf", "image/jpeg", "image/png" };
+
         private readonly AppDbContext _context;
         private readonly ILogger<PostulacionesPuestoController> _logger;
 
@@ -168,10 +178,10 @@ namespace Backend.Controllers
                     return BadRequest(new { mensaje = $"Falta el archivo del documento \"{documentoDefinicion.Nombre}\"." });
                 }
 
-                if (!archivo.FileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase) ||
-                    archivo.ContentType != "application/pdf")
+                var extensionDocumento = Path.GetExtension(archivo.FileName).ToLowerInvariant();
+                if (!ExtensionesDocumentoPermitidas.Contains(extensionDocumento) || !ContentTypesDocumentoPermitidos.Contains(archivo.ContentType))
                 {
-                    return BadRequest(new { mensaje = $"El documento \"{documentoDefinicion.Nombre}\" debe ser un archivo PDF." });
+                    return BadRequest(new { mensaje = $"El documento \"{documentoDefinicion.Nombre}\" debe ser un archivo PDF, JPG o PNG." });
                 }
 
                 byte[] archivoBytes;
@@ -179,6 +189,17 @@ namespace Backend.Controllers
                 {
                     await archivo.CopyToAsync(ms);
                     archivoBytes = ms.ToArray();
+                }
+
+                // Igual que DocumentosController: el Content-Type/extensión
+                // declarados pueden mentir, así que se revisa la firma real
+                // del contenido antes de aceptarlo.
+                if (!FormatoRealCoincide(archivoBytes, extensionDocumento))
+                {
+                    return BadRequest(new
+                    {
+                        mensaje = $"El documento \"{documentoDefinicion.Nombre}\" parece estar dañado o no corresponde a un PDF/imagen válido."
+                    });
                 }
 
                 documentosAGuardar.Add(new PostulacionPuestoDocumento
@@ -338,6 +359,42 @@ namespace Backend.Controllers
                 .AnyAsync(p => p.UsuarioId == usuarioId && p.PerfilPuestoId == perfilPuestoId);
 
             return Ok(new { existe });
+        }
+
+        // Mismo criterio que DocumentosController: valida que el contenido
+        // real del archivo (sus primeros bytes) corresponda a la extensión
+        // declarada, en vez de confiar solo en el nombre/Content-Type.
+        private static bool FormatoRealCoincide(byte[] contenido, string extensionDeclarada)
+        {
+            var formatoReal = DetectarFormatoReal(contenido);
+            return extensionDeclarada switch
+            {
+                ".pdf" => formatoReal == "pdf",
+                ".jpg" or ".jpeg" => formatoReal == "jpg",
+                ".png" => formatoReal == "png",
+                _ => false
+            };
+        }
+
+        private static string? DetectarFormatoReal(byte[] contenido)
+        {
+            if (contenido.Length >= 4 && contenido[0] == 0x25 && contenido[1] == 0x50 && contenido[2] == 0x44 && contenido[3] == 0x46)
+            {
+                return "pdf"; // %PDF
+            }
+
+            if (contenido.Length >= 3 && contenido[0] == 0xFF && contenido[1] == 0xD8 && contenido[2] == 0xFF)
+            {
+                return "jpg";
+            }
+
+            if (contenido.Length >= 8 && contenido[0] == 0x89 && contenido[1] == 0x50 && contenido[2] == 0x4E && contenido[3] == 0x47
+                && contenido[4] == 0x0D && contenido[5] == 0x0A && contenido[6] == 0x1A && contenido[7] == 0x0A)
+            {
+                return "png";
+            }
+
+            return null;
         }
 
         private int ObtenerUsuarioIdActual()

@@ -28,7 +28,7 @@ const archivoEsValido = (archivo) => {
 
 /**
  * CU-04: carga y mantenimiento de documentación. Muestra una tarjeta por
- * cada uno de los siete tipos documentales (todos de "slot único": subir
+ * cada uno de los diez tipos documentales (todos de "slot único": subir
  * uno nuevo reemplaza al vigente, sin perder la versión anterior del lado
  * del servidor).
  */

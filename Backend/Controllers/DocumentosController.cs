@@ -13,7 +13,7 @@ namespace Backend.Controllers
     /// sesión de cookie de CU-02 — nadie puede leer, subir o eliminar un
     /// documento que no sea el propio.
     ///
-    /// Los siete tipos documentales son de "slot único" por aspirante: subir
+    /// Los diez tipos documentales son de "slot único" por aspirante: subir
     /// un archivo nuevo del mismo tipo marca el anterior como no vigente
     /// (conserva la versión) y crea uno nuevo.
     /// </summary>
@@ -37,7 +37,10 @@ namespace Backend.Controllers
             TipoDocumento.CartillaMilitar,
             TipoDocumento.RecomendacionLaboral,
             TipoDocumento.RecomendacionPersonal,
-            TipoDocumento.ComprobanteEstudios
+            TipoDocumento.ComprobanteEstudios,
+            TipoDocumento.ComprobanteDomicilio,
+            TipoDocumento.Curp,
+            TipoDocumento.CedulaProfesional
         };
 
         private readonly AppDbContext _context;

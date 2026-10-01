@@ -3,6 +3,7 @@ import { Link, Navigate, useNavigate, useParams } from 'react-router-dom'
 import axios from 'axios'
 import { useSesion } from '../context/SesionContext.jsx'
 import { ESTADOS_MEXICO } from '../constants/catalogos.js'
+import { detectarTipoDocumentoPorNombre } from '../constants/documentos.js'
 
 // RFC (persona física) y CURP: mismo criterio de longitud fija que
 // Postulacion.jsx y AsistentePerfil.jsx.
@@ -40,6 +41,15 @@ const formularioVacio = {
  * Solo se permite una postulación por usuario por vacante: al montar se
  * consulta GET /api/postulacionespuesto/mia/:id para deshabilitar el
  * formulario si ya se postuló antes a este mismo puesto.
+ *
+ * "Documentación requerida" se precarga cuando se puede: al montar también
+ * se trae GET /api/documentos (CU-04) y, para cada renglón que pide este
+ * perfil de puesto, se detecta por nombre (detectarTipoDocumentoPorNombre)
+ * si corresponde a uno de los tipos fijos que el aspirante ya tiene
+ * cargados en su perfil (Documentos.jsx) — si lo tiene, ese renglón queda
+ * en modo "reusar" por default (el aspirante puede cambiarlo por otro
+ * archivo si quiere). El archivo real solo se descarga de
+ * GET /api/documentos/:id/archivo hasta el momento de enviar, no antes.
  */
 function PostularsePerfilPuesto() {
   const { usuario, cargando } = useSesion()
@@ -52,12 +62,30 @@ function PostularsePerfilPuesto() {
 
   const [form, setForm] = useState(formularioVacio)
   const [comprobanteEstudios, setComprobanteEstudios] = useState(null)
+  // Cada entrada es { modo: 'nuevo', file } o { modo: 'reusar', documentoAspiranteId, nombreArchivo, contentType, estado }.
   const [archivosPorDocumento, setArchivosPorDocumento] = useState({})
   const [archivosPorCertificacion, setArchivosPorCertificacion] = useState({})
   const [perfilPrecargado, setPerfilPrecargado] = useState(false)
+  // Documentos que el aspirante ya tiene cargados en su perfil (CU-04, ver
+  // Documentos.jsx) — null mientras no se sabe todavía, [] si no tiene ninguno.
+  const [documentosPropios, setDocumentosPropios] = useState(null)
   const [feedback, setFeedback] = useState({ type: '', message: '' })
   const [enviando, setEnviando] = useState(false)
   const [yaSePostulo, setYaSePostulo] = useState(false)
+
+  // Documentos vigentes del perfil (Activo): los inactivos ya no se piden,
+  // así que no se les da un espacio de carga en el formulario. Se calcula
+  // aquí arriba (no solo más abajo, después de los primeros "return"
+  // condicionales) porque el useEffect de precarga de documentos lo
+  // necesita, y los Hooks no pueden depender de código después de un return
+  // condicional.
+  const documentosRequeridos = (perfilPuesto?.documentos || []).filter((d) => d.activo)
+
+  // Documentos propios ya cargados, indexados por tipo (solo los que sí
+  // tienen un archivo real — id no nulo).
+  const documentosPropiosPorTipo = Object.fromEntries(
+    (documentosPropios || []).filter((d) => d.id).map((d) => [d.tipoDocumento, d])
+  )
 
   // Perfil de puesto al que se está postulando: header (puesto/código) y
   // los documentos requeridos vigentes (Activo) para armar la zona de
@@ -111,6 +139,63 @@ function PostularsePerfilPuesto() {
       cancelado = true
     }
   }, [usuario, id])
+
+  // Documentos que el aspirante ya tiene cargados en su perfil (CU-04),
+  // para poder precargar "Documentación requerida" más abajo. Si falla la
+  // consulta, se deja en [] — el formulario simplemente no precarga nada y
+  // el aspirante sube todo a mano, como antes de este cambio.
+  useEffect(() => {
+    if (!usuario) return
+
+    let cancelado = false
+
+    axios
+      .get('/api/documentos')
+      .then((response) => {
+        if (!cancelado) setDocumentosPropios(response.data)
+      })
+      .catch(() => {
+        if (!cancelado) setDocumentosPropios([])
+      })
+
+    return () => {
+      cancelado = true
+    }
+  }, [usuario])
+
+  // Precarga de "Documentación requerida": para cada renglón que pide este
+  // perfil de puesto, si se detecta que corresponde a un tipo del catálogo
+  // de CU-04 y el aspirante ya tiene un documento vigente de ese tipo, se
+  // deja preseleccionado en modo "reusar". Nunca pisa una elección que el
+  // aspirante ya haya hecho a mano (ni "nuevo" ni "reusar" desactivado).
+  useEffect(() => {
+    if (!perfilPuesto || !documentosPropios) return
+
+    setArchivosPorDocumento((actual) => {
+      let huboCambios = false
+      const siguiente = { ...actual }
+
+      documentosRequeridos.forEach((documento) => {
+        if (siguiente[documento.id]) return
+
+        const tipoDetectado = detectarTipoDocumentoPorNombre(documento.nombre, documento.tipoDocumento)
+        const propio = tipoDetectado ? documentosPropiosPorTipo[tipoDetectado] : null
+
+        if (propio) {
+          siguiente[documento.id] = {
+            modo: 'reusar',
+            documentoAspiranteId: propio.id,
+            nombreArchivo: propio.nombreArchivo,
+            contentType: propio.contentType,
+            estado: propio.estado,
+          }
+          huboCambios = true
+        }
+      })
+
+      return huboCambios ? siguiente : actual
+    })
+  }, [perfilPuesto, documentosPropios])
 
   // Precarga desde el perfil del aspirante (CU-03), igual que
   // Postulacion.jsx: los campos quedan editables y no se guarda nada de
@@ -179,7 +264,55 @@ function PostularsePerfilPuesto() {
 
   const handleDocumentoFileChange = (documentoId) => (e) => {
     const file = e.target.files[0] || null
-    setArchivosPorDocumento((actual) => ({ ...actual, [documentoId]: file }))
+    setArchivosPorDocumento((actual) => ({
+      ...actual,
+      [documentoId]: file ? { modo: 'nuevo', file } : null,
+    }))
+  }
+
+  // Vuelve a poner en modo "reusar" un documento que se había cambiado a
+  // "nuevo" (o que nunca se había precargado), usando el documento que el
+  // aspirante ya tiene cargado en su perfil.
+  const usarDocumentoPropio = (documentoId, propio) => {
+    setArchivosPorDocumento((actual) => ({
+      ...actual,
+      [documentoId]: {
+        modo: 'reusar',
+        documentoAspiranteId: propio.id,
+        nombreArchivo: propio.nombreArchivo,
+        contentType: propio.contentType,
+        estado: propio.estado,
+      },
+    }))
+  }
+
+  // Cambia un documento de modo "reusar" a "nuevo" (vacío), para que el
+  // aspirante pueda subir un archivo distinto al que ya tiene en su perfil.
+  const subirOtroArchivo = (documentoId) => {
+    setArchivosPorDocumento((actual) => ({ ...actual, [documentoId]: { modo: 'nuevo', file: null } }))
+  }
+
+  // Convierte lo que haya en archivosPorDocumento[documento.id] en un File
+  // real para mandarlo en el FormData: si es "nuevo", el que ya seleccionó
+  // el aspirante; si es "reusar", descarga en este momento el contenido
+  // del documento que ya tiene cargado en su perfil (CU-04).
+  const resolverArchivoDocumento = async (estado) => {
+    if (!estado) return null
+
+    if (estado.modo === 'nuevo') {
+      return estado.file
+    }
+
+    if (estado.modo === 'reusar') {
+      const response = await axios.get(`/api/documentos/${estado.documentoAspiranteId}/archivo`, {
+        responseType: 'blob',
+      })
+      return new File([response.data], estado.nombreArchivo || 'documento', {
+        type: response.data.type || estado.contentType || 'application/octet-stream',
+      })
+    }
+
+    return null
   }
 
   const handleCertificacionFileChange = (certificacionId) => (e) => {
@@ -221,10 +354,17 @@ function PostularsePerfilPuesto() {
     }
 
     // Cada documento obligatorio (de los vigentes) debe tener su archivo
-    // antes de mandar — mismo criterio que valida el backend.
-    const documentoObligatorioFaltante = documentosRequeridos.find(
-      (documento) => documento.obligatorio && !archivosPorDocumento[documento.id]
-    )
+    // antes de mandar — mismo criterio que valida el backend. Un documento
+    // en modo "reusar" cuenta como cubierto (se descarga del perfil al
+    // momento de enviar, ver resolverArchivoDocumento).
+    const documentoObligatorioFaltante = documentosRequeridos.find((documento) => {
+      if (!documento.obligatorio) return false
+      const estado = archivosPorDocumento[documento.id]
+      if (!estado) return true
+      if (estado.modo === 'nuevo') return !estado.file
+      if (estado.modo === 'reusar') return !estado.documentoAspiranteId
+      return true
+    })
     if (documentoObligatorioFaltante) {
       setFeedback({ type: 'error', message: `Falta el archivo del documento obligatorio "${documentoObligatorioFaltante.nombre}".` })
       return
@@ -264,16 +404,6 @@ function PostularsePerfilPuesto() {
     }
     data.append('comprobanteEstudios', comprobanteEstudios)
 
-    // Listas paralelas (mismo índice = mismo documento), igual que
-    // certificacionesNombres/certificacionesArchivos en Postulacion.jsx.
-    documentosRequeridos.forEach((documento) => {
-      const archivo = archivosPorDocumento[documento.id]
-      if (archivo) {
-        data.append('documentosIds', documento.id)
-        data.append('documentosArchivos', archivo)
-      }
-    })
-
     certificacionesRequeridas.forEach((certificacion) => {
       const archivo = archivosPorCertificacion[certificacion.id]
       if (archivo) {
@@ -286,13 +416,27 @@ function PostularsePerfilPuesto() {
     setFeedback({ type: '', message: '' })
 
     try {
+      // Listas paralelas (mismo índice = mismo documento), igual que
+      // certificacionesNombres/certificacionesArchivos en Postulacion.jsx.
+      // Los que están en modo "reusar" se descargan aquí mismo del perfil
+      // del aspirante (CU-04) en vez de venir de un <input type="file">.
+      for (const documento of documentosRequeridos) {
+        const archivo = await resolverArchivoDocumento(archivosPorDocumento[documento.id])
+        if (archivo) {
+          data.append('documentosIds', documento.id)
+          data.append('documentosArchivos', archivo)
+        }
+      }
+
       await axios.post('/api/postulacionespuesto', data, {
         headers: { 'Content-Type': 'multipart/form-data' },
       })
       setFeedback({ type: 'success', message: '¡Postulación enviada correctamente!' })
       setYaSePostulo(true)
     } catch (err) {
-      const msg = err.response?.data?.mensaje || 'Ocurrió un error al enviar la postulación.'
+      const msg =
+        err.response?.data?.mensaje ||
+        'Ocurrió un error al enviar la postulación. Si el problema persiste, sube tus documentos manualmente e intenta de nuevo.'
       setFeedback({ type: 'error', message: msg })
     } finally {
       setEnviando(false)
@@ -329,10 +473,6 @@ function PostularsePerfilPuesto() {
       </section>
     )
   }
-
-  // Documentos vigentes del perfil (Activo): los inactivos ya no se piden,
-  // así que no se les da un espacio de carga en el formulario.
-  const documentosRequeridos = (perfilPuesto?.documentos || []).filter((d) => d.activo)
 
   // Mismo texto que ya se ve en la tabla de Vacantes.jsx y en el detalle del
   // puesto: los nombres de las profesiones ya traen el nivel incluido
@@ -668,36 +808,77 @@ function PostularsePerfilPuesto() {
             <p className="text-sm text-[var(--muted)]">Este perfil no pide documentación adicional.</p>
           ) : (
             <div className="space-y-4">
-              {documentosRequeridos.map((documento) => (
-                <div
-                  key={documento.id}
-                  className="flex flex-col gap-4 rounded-xl border border-[var(--border)] p-4 sm:flex-row sm:items-center sm:justify-between"
-                >
-                  <div className="sm:max-w-xs">
-                    <p className="font-medium text-[var(--text)]">
-                      {documento.nombre} {documento.obligatorio && <span className="text-red-500">*</span>}
-                    </p>
-                    {documento.observaciones && (
-                      <p className="mt-1 text-xs text-[var(--muted)]">{documento.observaciones}</p>
-                    )}
-                  </div>
+              {documentosRequeridos.map((documento) => {
+                const estado = archivosPorDocumento[documento.id]
+                const modoReusar = estado?.modo === 'reusar'
+                const tipoDetectado = detectarTipoDocumentoPorNombre(documento.nombre, documento.tipoDocumento)
+                const propioSugerido = tipoDetectado ? documentosPropiosPorTipo[tipoDetectado] : null
 
-                  <div className="sm:w-64">
-                    <input
-                      id={`documento-${documento.id}`}
-                      name={`documento-${documento.id}`}
-                      type="file"
-                      onChange={handleDocumentoFileChange(documento.id)}
-                      className="w-full text-sm text-[var(--text)] file:mr-3 file:rounded-md file:border-0 file:bg-siatec-600 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-siatec-700"
-                    />
-                    {archivosPorDocumento[documento.id] && (
-                      <p className="mt-1 text-xs text-[var(--muted)]">
-                        Archivo seleccionado: {archivosPorDocumento[documento.id].name}
+                return (
+                  <div
+                    key={documento.id}
+                    className="flex flex-col gap-4 rounded-xl border border-[var(--border)] p-4 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="sm:max-w-xs">
+                      <p className="font-medium text-[var(--text)]">
+                        {documento.nombre} {documento.obligatorio && <span className="text-red-500">*</span>}
                       </p>
-                    )}
+                      {documento.observaciones && (
+                        <p className="mt-1 text-xs text-[var(--muted)]">{documento.observaciones}</p>
+                      )}
+                    </div>
+
+                    <div className="sm:w-64">
+                      {modoReusar ? (
+                        <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-xs text-green-700 dark:border-green-800 dark:bg-green-900/30 dark:text-green-300">
+                          <p className="font-medium">Usaremos el que ya tienes en tu perfil</p>
+                          <p className="mt-0.5 break-words text-[var(--muted)]">{estado.nombreArchivo}</p>
+                          {estado.estado === 'vencido' && (
+                            <p className="mt-1 text-amber-600 dark:text-amber-400">
+                              Este documento aparece vencido en tu perfil; considera subir uno actualizado.
+                            </p>
+                          )}
+                          {estado.estado === 'porVencer' && (
+                            <p className="mt-1 text-amber-600 dark:text-amber-400">
+                              Este documento está por vencer en tu perfil.
+                            </p>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => subirOtroArchivo(documento.id)}
+                            className="mt-2 font-semibold text-siatec-700 hover:underline dark:text-siatec-300"
+                          >
+                            Subir otro archivo
+                          </button>
+                        </div>
+                      ) : (
+                        <>
+                          <input
+                            id={`documento-${documento.id}`}
+                            name={`documento-${documento.id}`}
+                            type="file"
+                            accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+                            onChange={handleDocumentoFileChange(documento.id)}
+                            className="w-full text-sm text-[var(--text)] file:mr-3 file:rounded-md file:border-0 file:bg-siatec-600 file:px-3 file:py-1.5 file:text-sm file:font-semibold file:text-white hover:file:bg-siatec-700"
+                          />
+                          {estado?.file && (
+                            <p className="mt-1 text-xs text-[var(--muted)]">Archivo seleccionado: {estado.file.name}</p>
+                          )}
+                          {propioSugerido && (
+                            <button
+                              type="button"
+                              onClick={() => usarDocumentoPropio(documento.id, propioSugerido)}
+                              className="mt-1 text-xs font-semibold text-siatec-600 hover:underline"
+                            >
+                              Usar el que ya tengo en mi perfil ({propioSugerido.nombreArchivo})
+                            </button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
