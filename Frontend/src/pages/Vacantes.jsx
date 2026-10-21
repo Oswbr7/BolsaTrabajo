@@ -14,7 +14,21 @@ import { FORMACION_OPTIONS } from '../constants/catalogos.js'
  *   - "Para ti": puestos cuya escolaridad mínima incluye alguna de las
  *     profesiones registradas en la formación académica del usuario en
  *     sesión (GET /api/perfil) — el cruce real por ProfesionId documentado
- *     como "parte 2" en conexionPerfilPuesto.md.
+ *     como "parte 2" en conexionPerfilPuesto.md. También cuenta como
+ *     coincidencia una carrera distinta pero del mismo Nivel y la misma
+ *     CarreraGenerica del catálogo (columna agregada en
+ *     AgregarAreaEstudioYCarreraGenerica.sql) — p. ej. el puesto pide
+ *     "Contador Público" y el aspirante tiene "Contabilidad" registrada:
+ *     ambas son Licenciatura y están agrupadas bajo CarreraGenerica
+ *     "Contaduria" en el catálogo SEP 2022, aunque sean ProfesionId
+ *     distintos. OJO: esto depende de cómo SEP agrupó cada carrera — no es
+ *     un criterio de similitud semántica propio del proyecto, así que dos
+ *     carreras que a simple vista parecen "lo mismo" pueden no coincidir si
+ *     el catálogo las clasificó en CarreraGenerica distintas (ej.
+ *     "Contaduría Pública" quedó bajo "Administracion", no "Contaduria").
+ *     Se usa AreaEstudio (en vez de CarreraGenerica) solo para el <select>
+ *     del filtro de "Más Puestos" — ahí sí conviene lo más amplio posible
+ *     porque es una búsqueda explícita del usuario, no una sugerencia.
  *   - "Más Puestos": el resto de los puestos (los que NO coincidieron con
  *     el perfil), para poder explorar todas las áreas. El filtro por
  *     especialidad (mismo patrón de tres niveles que Postulacion.jsx y
@@ -161,8 +175,33 @@ function Vacantes() {
     )
   }, [perfilAspirante])
 
+  // Además del ProfesionId exacto, se arma un segundo set con las claves
+  // "Nivel||CarreraGenerica" de las profesiones del usuario — así una
+  // escolaridad pedida con un ProfesionId distinto pero de la misma
+  // CarreraGenerica (y mismo Nivel) también cuenta como coincidencia. Se
+  // excluyen las profesiones sin CarreraGenerica (las genéricas de
+  // Secundaria/Preparatoria/Diplomado, ver Models/Profesion.cs) para no
+  // hacer que todas ellas se agrupen entre sí por accidente.
+  const misNivelCarreraGenericaKeys = useMemo(() => {
+    const formacion = perfilAspirante?.existe ? perfilAspirante.formacionAcademica || [] : []
+    const claves = new Set()
+    for (const f of formacion) {
+      const profesion = profesionesPorId[f.profesionId]
+      if (profesion?.carreraGenerica) {
+        claves.add(`${profesion.nivel}||${profesion.carreraGenerica}`)
+      }
+    }
+    return claves
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- profesionesPorId se arma de nuevo en cada render a partir de `profesiones`; usar ese array (estable salvo cuando realmente cambia el catálogo) como dependencia evita recalcular en cada render sin perder reactividad real.
+  }, [perfilAspirante, profesiones])
+
   const coincideConMiPerfil = (perfil) =>
-    (perfil.escolaridades || []).some((e) => misProfesionIds.has(String(e.profesionId)))
+    (perfil.escolaridades || []).some((e) => {
+      if (misProfesionIds.has(String(e.profesionId))) return true
+      const profesion = profesionesPorId[e.profesionId]
+      return Boolean(profesion?.carreraGenerica) &&
+        misNivelCarreraGenericaKeys.has(`${profesion.nivel}||${profesion.carreraGenerica}`)
+    })
 
   // "Para ti": puestos que piden, entre sus escolaridades mínimas, alguna
   // profesión que el usuario ya tiene registrada. "Más Puestos": todo lo
