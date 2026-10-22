@@ -349,7 +349,37 @@ namespace Backend.Controllers
             };
 
             _context.Postulaciones.Add(postulacion);
-            await _context.SaveChangesAsync();
+            try
+            {
+                await _context.SaveChangesAsync();
+            }
+            catch (DbUpdateException ex) when (EsViolacionDeLlaveForanea(ex))
+            {
+                // 547 = violación de FOREIGN KEY: el ProfesionId/AreaId no
+                // existe en el catálogo de ESTA base de datos. Pasa cuando la
+                // página cargó el catálogo de otro backend (p. ej. con dos
+                // instancias corriendo y el botón de desarrollo apuntando al
+                // puerto equivocado) o cuando el catálogo cambió mientras la
+                // página estaba abierta. Es un conflicto de estado, no un
+                // error interno: se responde 409 con una acción clara.
+                _logger.LogWarning(ex,
+                    "Violación de FK al guardar la postulación de {Correo} (ProfesionId {ProfesionId}, AreaId {AreaId}). El catálogo de este servidor no coincide con el que usó el cliente.",
+                    correo, profesion.Id, area.Id);
+                return Conflict(new
+                {
+                    mensaje = "La profesión o área elegida no existe en el catálogo de este servidor (la página pudo cargarse desde otro servidor o el catálogo cambió). Recarga la página e inténtalo de nuevo."
+                });
+            }
+            catch (DbUpdateException ex)
+            {
+                // Sin este try/catch, cualquier SqlException (p. ej. "Invalid
+                // column name" porque la tabla quedó desactualizada en algún
+                // ambiente) salía como HTTP 500 vacío e indiagnóstico. Así se
+                // registra la causa real en el log del backend y el cliente
+                // recibe un mensaje accionable.
+                _logger.LogError(ex, "Error al guardar la postulación de {Correo}. Posible esquema desactualizado de dbo.RRHH_Reclutamiento_Postulaciones (correr Backend/SyncPostulacionesSchema.sql).", correo);
+                return StatusCode(500, new { mensaje = "No se pudo guardar la postulación. Es probable que la base de datos esté desactualizada en este servidor; avisa al administrador." });
+            }
 
             if (certificacionesAGuardar.Count > 0)
             {
@@ -359,7 +389,15 @@ namespace Backend.Controllers
                 }
 
                 _context.PostulacionesCertificaciones.AddRange(certificacionesAGuardar);
-                await _context.SaveChangesAsync();
+                try
+                {
+                    await _context.SaveChangesAsync();
+                }
+                catch (DbUpdateException ex)
+                {
+                    _logger.LogError(ex, "Error al guardar las certificaciones de la postulación {PostulacionId} de {Correo}. Posible tabla faltante dbo.RRHH_Reclutamiento_Postulaciones_Certificaciones (correr Backend/SyncPostulacionesSchema.sql).", postulacion.Id, correo);
+                    return StatusCode(500, new { mensaje = "La postulación se guardó, pero falló el guardado de sus certificaciones. Avisa al administrador." });
+                }
             }
 
             _logger.LogInformation("Postulacion registrada: {Correo}", postulacion.Correo);
@@ -394,6 +432,13 @@ namespace Backend.Controllers
 
             return Ok(new { existe });
         }
+
+        // 547 es el número de error de SQL Server para violación de FOREIGN
+        // KEY (INSERT/UPDATE con un Id que no existe en la tabla
+        // referenciada). EF lo envuelve en DbUpdateException con el
+        // SqlException original como InnerException.
+        private static bool EsViolacionDeLlaveForanea(DbUpdateException ex)
+            => ex.InnerException is Microsoft.Data.SqlClient.SqlException sqlEx && sqlEx.Number == 547;
 
         [HttpGet]
         public async Task<IActionResult> Listado()

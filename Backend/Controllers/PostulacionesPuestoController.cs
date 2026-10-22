@@ -313,28 +313,54 @@ namespace Backend.Controllers
             };
 
             _context.PostulacionesPuesto.Add(postulacionPuesto);
-            await _context.SaveChangesAsync();
-
-            if (documentosAGuardar.Count > 0)
+            try
             {
-                foreach (var documento in documentosAGuardar)
+                await _context.SaveChangesAsync();
+
+                if (documentosAGuardar.Count > 0)
                 {
-                    documento.PostulacionPuestoId = postulacionPuesto.Id;
+                    foreach (var documento in documentosAGuardar)
+                    {
+                        documento.PostulacionPuestoId = postulacionPuesto.Id;
+                    }
+
+                    _context.PostulacionesPuestoDocumentos.AddRange(documentosAGuardar);
+                    await _context.SaveChangesAsync();
                 }
 
-                _context.PostulacionesPuestoDocumentos.AddRange(documentosAGuardar);
-                await _context.SaveChangesAsync();
+                if (certificacionesAGuardar.Count > 0)
+                {
+                    foreach (var certificacion in certificacionesAGuardar)
+                    {
+                        certificacion.PostulacionPuestoId = postulacionPuesto.Id;
+                    }
+
+                    _context.PostulacionesPuestoCertificaciones.AddRange(certificacionesAGuardar);
+                    await _context.SaveChangesAsync();
+                }
             }
-
-            if (certificacionesAGuardar.Count > 0)
+            catch (DbUpdateException ex) when (EsViolacionDeLlaveForanea(ex))
             {
-                foreach (var certificacion in certificacionesAGuardar)
+                // Mismo criterio que PostulacionesController.Registrar: un
+                // Id de catálogo que este servidor no reconoce (página
+                // cargada de otro backend o catálogo modificado entre la
+                // carga y el envío) es un conflicto de estado → 409.
+                _logger.LogWarning(ex,
+                    "Violación de FK al guardar la postulación a puesto {PerfilPuestoId} del usuario {UsuarioId}. El catálogo de este servidor no coincide con el que usó el cliente.",
+                    perfilPuesto.Id, usuarioId);
+                return Conflict(new
                 {
-                    certificacion.PostulacionPuestoId = postulacionPuesto.Id;
-                }
-
-                _context.PostulacionesPuestoCertificaciones.AddRange(certificacionesAGuardar);
-                await _context.SaveChangesAsync();
+                    mensaje = "La vacante o sus documentos cambiaron desde que cargaste la página. Recarga la página e inténtalo de nuevo."
+                });
+            }
+            catch (DbUpdateException ex)
+            {
+                // Sin este try/catch cualquier SqlException salía como HTTP
+                // 500 vacío e indiagnóstico. Así se registra la causa real
+                // en el log del backend y el cliente recibe un mensaje
+                // accionable.
+                _logger.LogError(ex, "Error al guardar la postulación a puesto {PerfilPuestoId} del usuario {UsuarioId}.", perfilPuesto.Id, usuarioId);
+                return StatusCode(500, new { mensaje = "No se pudo enviar la postulación. Avisa al administrador del sistema." });
             }
 
             _logger.LogInformation("PostulacionPuesto registrada: usuario {UsuarioId}, perfil {PerfilPuestoId}", usuarioId, perfilPuesto.Id);
@@ -360,6 +386,13 @@ namespace Backend.Controllers
 
             return Ok(new { existe });
         }
+
+        // 547 es el número de error de SQL Server para violación de FOREIGN
+        // KEY (INSERT/UPDATE con un Id que no existe en la tabla
+        // referenciada). EF lo envuelve en DbUpdateException con el
+        // SqlException original como InnerException.
+        private static bool EsViolacionDeLlaveForanea(DbUpdateException ex)
+            => ex.InnerException is Microsoft.Data.SqlClient.SqlException sqlEx && sqlEx.Number == 547;
 
         // Mismo criterio que DocumentosController: valida que el contenido
         // real del archivo (sus primeros bytes) corresponda a la extensión

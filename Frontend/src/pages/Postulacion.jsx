@@ -15,7 +15,11 @@ const API_URL = '/api/postulaciones'
 // "withCredentials" (esa bandera solo aplica a peticiones cross-origin). Al
 // pegarle directo al puerto del backend, sí es cross-origin de verdad, y ahí
 // "withCredentials: false" si evita que se mande la cookie.
-const API_URL_BACKEND_DIRECTO_DEV = 'http://localhost:5053/api/postulaciones'
+// La URL se puede sobreescribir por ambiente con la variable de entorno
+// VITE_API_URL_BACKEND (ver .env / .env.production de Vite): si el backend
+// del ambiente corre en otro host o puerto, no hay que tocar este código.
+const API_URL_BACKEND_DIRECTO_DEV =
+  import.meta.env.VITE_API_URL_BACKEND ?? 'http://localhost:5053/api/postulaciones'
 
 const NOMBRES_ALEATORIOS = ['Juan', 'María', 'Carlos', 'Ana', 'Luis', 'Sofía', 'Miguel', 'Laura', 'Jorge', 'Fernanda']
 
