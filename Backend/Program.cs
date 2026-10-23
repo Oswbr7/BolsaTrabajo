@@ -1,6 +1,7 @@
 using Backend.Data;
 using Backend.Services;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using Swashbuckle.AspNetCore.SwaggerGen;
 using Swashbuckle.AspNetCore.SwaggerUI;
@@ -95,6 +96,26 @@ builder.Services.AddScoped<IServicioVerificacion>(sp =>
 // no requiere agregar ningún paquete NuGet nuevo. En desarrollo (HTTP, sin
 // TLS) Cookie.SecurePolicy debe permitir HTTP; en producción, con HTTPS,
 // esto se ajusta a SameAsRequest o Always sin tocar el resto del flujo.
+//
+// Aislamiento de la cookie por ambiente: las cookies se guardan por DOMINIO
+// (localhost), no por puerto — si en la misma máquina corren dos backends
+// (p. ej. uno de pruebas y otro "de verdad") con el mismo nombre de cookie,
+// el navegador les manda la misma cookie a ambos. Sin el SetApplicationName
+// de abajo, ambos backends comparten el mismo propósito de cifrado (mismo
+// perfil de usuario de Windows = mismas llaves DPAPI) y cada uno descifra
+// la cookie del otro, atribuyendo peticiones a un UsuarioId que NO existe
+// en su propia base de datos — eso rompía el FK de Postulaciones.UsuarioId
+// con error 547 ("The INSERT statement conflicted with the FOREIGN KEY
+// constraint") al postular. Con un ApplicationName distinto por DB_NAME, la
+// cookie del otro ambiente simplemente no descifra y la petición se trata
+// como anónima (como debe ser).
+// aislamiento también cubre el caso de dos servidores distintos que usen
+// el mismo nombre de base de datos.
+builder.Services.AddDataProtection()
+    .SetApplicationName(
+        $"BolsaTrabajo-{Environment.GetEnvironmentVariable("DB_HOST") ?? "localhost"}-" +
+        $"{Environment.GetEnvironmentVariable("DB_NAME") ?? "local"}");
+
 builder.Services.AddAuthentication(CookieAuthenticationDefaults.AuthenticationScheme)
     .AddCookie(options =>
     {
@@ -205,6 +226,24 @@ static string BuildSqlServerConnectionString()
     var password = Require("DB_PASSWORD");
     var encrypt = Environment.GetEnvironmentVariable("DB_ENCRYPT") ?? "false";
     var trustServerCertificate = Environment.GetEnvironmentVariable("DB_TRUST_SERVER_CERTIFICATE") ?? "true";
+
+    // Seguridad: si las credenciales apuntan a una base del sistema de SQL
+    // Server (p. ej. porque el .env quedó mal o alguien corrió la app desde
+    // una conexión por defecto), la app NO debe arrancar "funcionando" en
+    // silencio contra la base equivocada — las tablas RRHH_Reclutamiento_*
+    // llegaron a crearse en master de esa forma una vez, y las postulaciones
+    // fallaban con violaciones de FK contra un catálogo inexistente. Mejor
+    // caer al arrancar con un mensaje inequívoco.
+    var basesDelSistema = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+    {
+        "master", "model", "msdb", "tempdb"
+    };
+    if (basesDelSistema.Contains(database))
+    {
+        throw new InvalidOperationException(
+            $"DB_NAME no puede ser '{database}': es una base de datos del sistema de SQL Server. " +
+            "Revisa el archivo .env del backend (debe apuntar a la base del módulo, p. ej. LUCCA).");
+    }
 
     return $"Server={host},{port};Database={database};User Id={user};Password={password};" +
            $"Encrypt={encrypt};TrustServerCertificate={trustServerCertificate};";

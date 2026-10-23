@@ -1211,7 +1211,11 @@ function Postulacion() {
           </button>
         </form>
 
-        {import.meta.env.DEV && (
+        {/* La herramienta de desarrollo aparece en `npm run dev` y también en
+            builds de pruebas que definan VITE_MOSTRAR_HERRAMIENTAS_DEV=true
+            (ver .env.production local) — en producción real no se define y
+            no se emite este bloque. */}
+        {(import.meta.env.DEV || import.meta.env.VITE_MOSTRAR_HERRAMIENTAS_DEV === 'true') && (
           <div className="mt-6 border-t border-dashed border-amber-400 pt-6">
             <p className="mb-2 text-xs text-amber-600 dark:text-amber-400">
               Herramienta solo para desarrollo — no aparece en producción. Genera postulantes anónimos (no usa tu sesión iniciada), aunque esta página solo se vea estando dentro de una cuenta.

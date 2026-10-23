@@ -74,6 +74,21 @@ namespace Backend.Controllers
         {
             var usuarioId = ObtenerUsuarioIdActual();
 
+            // La cookie descifró, pero su UsuarioId debe existir en ESTA base
+            // de datos: si la cookie vino de otro backend/ambiente (cookies
+            // de localhost compartidas entre puertos) el Id no existiría aquí
+            // y rompería el FK al insertar. Mejor 401 claro que un 500. (Con
+            // el aislamiento de DataProtection en Program.cs ya no debería
+            // pasar — esto es defensa en profundidad.)
+            var usuarioExiste = await _context.Usuarios
+                .AsNoTracking()
+                .AnyAsync(u => u.Id == usuarioId);
+
+            if (!usuarioExiste)
+            {
+                return Unauthorized(new { mensaje = "Tu sesión no es válida en este servidor. Cierra sesión e inicia de nuevo." });
+            }
+
             var perfilPuesto = await _context.PerfilesPuesto
                 .AsNoTracking()
                 .FirstOrDefaultAsync(p => p.Id == perfilPuestoId);
@@ -346,8 +361,8 @@ namespace Backend.Controllers
                 // cargada de otro backend o catálogo modificado entre la
                 // carga y el envío) es un conflicto de estado → 409.
                 _logger.LogWarning(ex,
-                    "Violación de FK al guardar la postulación a puesto {PerfilPuestoId} del usuario {UsuarioId}. El catálogo de este servidor no coincide con el que usó el cliente.",
-                    perfilPuesto.Id, usuarioId);
+                    "Violación de FK al guardar la postulación a puesto {PerfilPuestoId} del usuario {UsuarioId}. Restricción: {Restriccion}",
+                    perfilPuesto.Id, usuarioId, ex.InnerException?.Message);
                 return Conflict(new
                 {
                     mensaje = "La vacante o sus documentos cambiaron desde que cargaste la página. Recarga la página e inténtalo de nuevo."

@@ -68,7 +68,21 @@ namespace Backend.Controllers
                 var claimUsuarioId = User.FindFirstValue(ClaimTypes.NameIdentifier);
                 if (int.TryParse(claimUsuarioId, out var usuarioIdParseado))
                 {
-                    usuarioId = usuarioIdParseado;
+                    // La cookie descifró bien, pero su UsuarioId podría no
+                    // existir en ESTA base de datos (cookie emitida por otro
+                    // backend/ambiente antes del aislamiento de DataProtection,
+                    // o base de datos reemplazada). Atribuir la postulación a
+                    // un Id inexistente rompía el FK_Postulaciones_Usuarios
+                    // con error 547; si no existe, se trata como anónimo —
+                    // el formulario público sigue siendo válido sin cuenta.
+                    var usuarioExiste = await _context.Usuarios
+                        .AsNoTracking()
+                        .AnyAsync(u => u.Id == usuarioIdParseado);
+
+                    if (usuarioExiste)
+                    {
+                        usuarioId = usuarioIdParseado;
+                    }
                 }
             }
 
@@ -363,8 +377,8 @@ namespace Backend.Controllers
                 // página estaba abierta. Es un conflicto de estado, no un
                 // error interno: se responde 409 con una acción clara.
                 _logger.LogWarning(ex,
-                    "Violación de FK al guardar la postulación de {Correo} (ProfesionId {ProfesionId}, AreaId {AreaId}). El catálogo de este servidor no coincide con el que usó el cliente.",
-                    correo, profesion.Id, area.Id);
+                    "Violación de FK al guardar la postulación de {Correo} (ProfesionId {ProfesionId}, AreaId {AreaId}, UsuarioId {UsuarioId}). Restricción: {Restriccion}",
+                    correo, profesion.Id, area.Id, usuarioId, ex.InnerException?.Message);
                 return Conflict(new
                 {
                     mensaje = "La profesión o área elegida no existe en el catálogo de este servidor (la página pudo cargarse desde otro servidor o el catálogo cambió). Recarga la página e inténtalo de nuevo."
