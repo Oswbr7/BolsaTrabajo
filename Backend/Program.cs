@@ -166,10 +166,21 @@ if (app.Environment.IsDevelopment())
 
 app.UseCors("Frontend");
 
+// SPA compilada (frontend): el ejecutable de pruebas sirve tanto la API como
+// el frontend desde este mismo proceso, así que el build de Vite se copia a
+// wwwroot antes de publicar (ver publicar-pruebas.bat en la raíz del repo).
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+
+// Cualquier ruta que no sea /api/* ni un archivo estático existente devuelve
+// index.html y deja que react-router resuelva — sin esto, refrescar /panel o
+// /login en el ejecutable daba 404.
+app.MapFallbackToFile("index.html");
 
 app.Run();
 

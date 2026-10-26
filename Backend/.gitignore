@@ -55,3 +55,6 @@ appsettings.*.local.json
 *.p12
 *.pem
 *.key
+
+# Build de la SPA copiado por publicar-pruebas.bat (artefacto temporal).
+wwwroot/

@@ -99,7 +99,44 @@ Abre `http://localhost:5173` en el navegador. Si el frontend muestra errores de 
 
 ---
 
-## 7. Checklist rápido
+## 7. Generar el ejecutable de pruebas
+
+Para llevar el proyecto completo a una máquina de pruebas sin instalar Node ni .NET, se puede generar un único `.exe` que sirve **tanto el backend como el frontend** desde el puerto 5053. Requisitos: solo Node.js y .NET SDK 10 instalados en la máquina donde se genera (la sección 1).
+
+Desde la raíz del repositorio:
+
+```bash
+publicar-pruebas.bat
+```
+
+El script hace todo en orden:
+
+1. Compila el frontend con `VITE_MOSTRAR_HERRAMIENTAS_DEV=true` (así el botón "Cargar 5 candidatos" queda visible en el ejecutable).
+2. Copia el build de Vite a `Backend/wwwroot/` (artefacto temporal, ignorado por git).
+3. Publica el backend con `dotnet publish -c Release -r win-x64 --self-contained /p:PublishSingleFile=true` hacia `dist-publicar/`.
+4. Copia `Backend/.env` a `dist-publicar/.env` y le agrega `CARGA_PRUEBA_OMITIR_SESION=true`, necesaria para que el botón "Cargar 5 candidatos" funcione al servirse la SPA y la API desde el mismo origen (sin esta variable el navegador siempre manda la cookie de sesión y 4 de las 5 postulaciones fallarían). **En producción real esta variable no se define y el bypass no existe.**
+5. Copia `iniciar-pruebas.bat` junto al ejecutable.
+
+Resultado en `dist-publicar/`:
+
+| Archivo | Qué es |
+|---|---|
+| `Backend.exe` | Ejecutable único (~90 MB, self-contained, no necesita .NET instalado). Fija el puerto 5053 por `appsettings.json`. |
+| `.env` | Credenciales de la base de datos de la máquina de pruebas (cámbialo si apunta a otra instancia de SQL Server). |
+| `iniciar-pruebas.bat` | Doble clic: arranca `Backend.exe` y mantiene la ventana abierta para ver el log en vivo. |
+
+Para probarlo: doble clic a `iniciar-pruebas.bat` en la máquina destino y abre `http://localhost:5053`. La SPA carga desde el propio ejecutable y todas las rutas (`/login`, `/panel`, …) funcionan al refrescar gracias al fallback a `index.html`.
+
+Notas:
+
+- Verifica que ningún otro proceso ocupe el puerto 5053 antes de arrancar (`netstat -ano | findstr :5053`).
+- El `.env` se busca en la carpeta del ejecutable, no junto al código fuente.
+- Swagger queda apagado en el ejecutable (arranca en `Production`).
+- `dist-publicar/` y `Backend/wwwroot/` están ignorados por git: son artefactos que se regeneran con el script, no se versionan.
+
+---
+
+## 8. Checklist rápido
 
 - [ ] Node.js y .NET SDK 10 instalados
 - [ ] Carpetas `Frontend/` y `Backend/` copiadas

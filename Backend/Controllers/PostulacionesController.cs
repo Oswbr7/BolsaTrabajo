@@ -54,8 +54,29 @@ namespace Backend.Controllers
             // que las agregó. Ambas listas llegan vacías si no capturó
             // ninguna — es un campo no obligatorio.
             [FromForm] List<string>? certificacionesNombres = null,
-            List<IFormFile>? certificacionesArchivos = null)
+            List<IFormFile>? certificacionesArchivos = null,
+            // Marca del botón de desarrollo "Cargar 5 candidatos"
+            // (Postulacion.jsx). Solo tiene efecto cuando el servidor lo
+            // permite explícitamente (ver cargaPruebaPermitida abajo) — en
+            // producción real la variable no se define y esto es un campo
+            // inerte más.
+            [FromForm] bool cargaDePrueba = false)
         {
+            // Carga de prueba: en el ejecutable de pruebas la SPA y la API
+            // comparten origen (mismo puerto), así que el navegador SIEMPRE
+            // manda la cookie de sesión aunque el cliente pida lo contrario
+            // (withCredentials no aplica en same-origin) y las 5 postulaciones
+            // se atribuirían a la cuenta logueada — las últimas 4 fallarían
+            // por la regla de una postulación por cuenta. Si CARGA_PRUEBA_OMITIR_SESION=true
+            // está en el .env del servidor (solo ambientes de pruebas), una
+            // petición marcada como cargaDePrueba se registra como anónima y
+            // sin la regla de una por cuenta.
+            var cargaPruebaPermitida = string.Equals(
+                Environment.GetEnvironmentVariable("CARGA_PRUEBA_OMITIR_SESION"),
+                "true",
+                StringComparison.OrdinalIgnoreCase);
+            var omitirSesion = cargaDePrueba && cargaPruebaPermitida;
+
             // El formulario sigue siendo público (sin [Authorize]): esto no
             // exige sesión, solo la aprovecha si ya existe. La cookie de
             // autenticación se procesa igual en cada request aunque el
@@ -63,7 +84,7 @@ namespace Backend.Controllers
             // sesión, User.Identity.IsAuthenticated viene en true sin que el
             // formulario tenga que mandar nada extra.
             int? usuarioId = null;
-            if (User.Identity?.IsAuthenticated == true)
+            if (!omitirSesion && User.Identity?.IsAuthenticated == true)
             {
                 var claimUsuarioId = User.FindFirstValue(ClaimTypes.NameIdentifier);
                 if (int.TryParse(claimUsuarioId, out var usuarioIdParseado))
@@ -92,7 +113,7 @@ namespace Backend.Controllers
             // servidor el bloqueo que ya hace Postulacion.jsx (botón
             // deshabilitado + leyenda) — sin esto, alguien podría saltarse
             // ese bloqueo llamando al endpoint directamente.
-            if (usuarioId.HasValue)
+            if (!omitirSesion && usuarioId.HasValue)
             {
                 var yaTienePostulacion = await _context.Postulaciones
                     .AsNoTracking()

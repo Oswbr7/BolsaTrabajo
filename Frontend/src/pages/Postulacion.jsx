@@ -474,6 +474,14 @@ function Postulacion() {
     data.append('rfc', generarPdfFalso('rfc-prueba.pdf'))
     data.append('actaNacimiento', generarPdfFalso('acta-nacimiento-prueba.pdf'))
     data.append('habilidadesClave', 'Trabajo en equipo, atención al detalle, manejo de Excel')
+    // Marca de carga de prueba: le dice al backend que ignore la sesión y
+    // la regla de una postulación por cuenta. Solo funciona si el servidor
+    // lo permite con CARGA_PRUEBA_OMITIR_SESION=true en su .env (ver
+    // PostulacionesController.Registrar) — en producción real es un campo
+    // inerte. Necesario en el ejecutable de pruebas porque ahí la SPA y la
+    // API comparten origen y el navegador siempre manda la cookie.
+    data.append('cargaDePrueba', 'true')
+
     // Carta de presentación: sigue siendo opcional en el formulario real, así
     // que aquí también se manda solo la mitad de las veces, para ejercitar
     // ambos casos (con y sin carta) en las mismas 5 pruebas.
